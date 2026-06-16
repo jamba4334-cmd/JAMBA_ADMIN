@@ -1,10 +1,10 @@
 import React, { useEffect } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+// 👇 NEW: Added collection, getDocs, and deleteDoc for the VIP list
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-// 👇 FIXED: Added explicit .js extension to the relative path
 import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Admin.css";
 
@@ -112,6 +112,7 @@ export default function Admin() {
             loadSiteSettings();
             loadAdminOrders(); 
             loadCustomerDetails();
+            loadWhitelistedSellers(); // 🚀 LOAD VIP SELLERS
         }
 
         let globalLiveProducts = [];
@@ -123,6 +124,83 @@ export default function Admin() {
         let selectedFiles = [];        
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
+
+        // 🚀 NEW: SELLER WHITELISTING ENGINE
+        async function loadWhitelistedSellers() {
+            try {
+                const querySnapshot = await getDocs(collection(db, "whitelisted_sellers"));
+                const list = document.getElementById('whitelisted-sellers-list');
+                if(!list) return;
+                
+                list.innerHTML = '';
+                
+                if(querySnapshot.empty) {
+                    list.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">No sellers currently authorized.</p>';
+                    return;
+                }
+                
+                querySnapshot.forEach((docSnap) => {
+                    const email = docSnap.id;
+                    const data = docSnap.data();
+                    const dateAdded = data.addedAt ? new Date(data.addedAt).toLocaleDateString() : 'Unknown Date';
+                    
+                    list.innerHTML += `
+                        <div style="display:flex; justify-content: space-between; padding: 14px; border-bottom: 1px solid #f3f4f6; align-items: center; background: #fff;">
+                            <div>
+                                <strong style="color: var(--primary); font-size: 14px;"><i class="fa-solid fa-user-check" style="color: var(--success); margin-right: 6px;"></i> ${email}</strong><br>
+                                <span style="font-size: 11px; color: var(--text-muted); margin-left: 22px;">Authorized on: ${dateAdded}</span>
+                            </div>
+                            <button class="action-btn btn-delete" onclick="window.removeAuthorizedSeller('${email}')" style="padding: 6px 12px; font-size: 12px;">
+                                <i class="fa-solid fa-trash"></i> Revoke Access
+                            </button>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error("Error loading VIP sellers", e);
+            }
+        }
+
+        window.addAuthorizedSeller = async function(e) {
+            e.preventDefault();
+            const emailInput = document.getElementById('new-seller-email');
+            const email = emailInput.value.trim().toLowerCase();
+            const btn = document.getElementById('add-seller-btn');
+
+            if(!email) return;
+
+            btn.disabled = true;
+            btn.innerText = "Authorizing...";
+
+            try {
+                // Save to Firestore. Document ID is the email so there are no duplicates.
+                await setDoc(doc(db, "whitelisted_sellers", email), {
+                    email: email,
+                    addedAt: new Date().toISOString(),
+                    addedBy: ALLOWED_ADMIN_EMAIL
+                });
+                showToast(email + " has been authorized!");
+                emailInput.value = "";
+                loadWhitelistedSellers();
+            } catch(err) {
+                alert("Error authorizing seller: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Authorize Seller";
+            }
+        };
+
+        window.removeAuthorizedSeller = async function(email) {
+            if(confirm(`Are you absolutely sure you want to revoke access for ${email}?\n\nThey will be locked out of the Seller Portal immediately.`)) {
+                try {
+                    await deleteDoc(doc(db, "whitelisted_sellers", email));
+                    showToast("Access revoked for " + email);
+                    loadWhitelistedSellers();
+                } catch(e) {
+                    alert("Error removing seller: " + e.message);
+                }
+            }
+        };
 
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
@@ -187,7 +265,6 @@ export default function Admin() {
             window.renderImagePreview();
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Add / Update Product
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -288,7 +365,6 @@ export default function Admin() {
             showSection('live-products', document.querySelectorAll('.nav-item')[0]);
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Toggle Visibility
         window.toggleProductHide = async function(productId, newState) {
             await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                 method: "PUT",
@@ -298,7 +374,6 @@ export default function Admin() {
             loadAdminInventory();
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Toggle Stock
         window.toggleProductStock = async function(productId, newState) {
             await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                 method: "PUT",
@@ -308,7 +383,6 @@ export default function Admin() {
             loadAdminInventory();
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Delete Product
         window.deleteProduct = async function(productId) {
             if(confirm("Are you sure you want to completely delete this product?")) {
                 await fetch(`${API_BASE_URL}/admin/products/${productId}`, { method: "DELETE" });
@@ -358,7 +432,6 @@ export default function Admin() {
             showSection('add-product', document.querySelectorAll('.nav-item')[1]);
         };
 
-        // CMS settings kept direct to Firebase for simplicity
         async function loadSiteSettings() {
             try {
                 const docRef = doc(db, "settings", "hero_banners");
@@ -505,7 +578,6 @@ export default function Admin() {
             }
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Fetch Products
         async function loadAdminInventory() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/products`);
@@ -621,7 +693,6 @@ export default function Admin() {
             else { renderInventoryList(regularItems.filter(p => p.category && p.category.toLowerCase().includes(gender.toLowerCase()))); }
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Fetch Orders
         async function loadAdminOrders() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/orders`);
@@ -637,7 +708,6 @@ export default function Admin() {
             }
         }
 
-        // 🚀 SERVER-SIDE ROUTING: Update Order Status
         window.updateOrderStatus = async function(orderId, newStatus) {
             if(confirm(`Are you sure you want to mark this order as ${newStatus.toUpperCase()}?`)) {
                 try {
@@ -654,7 +724,6 @@ export default function Admin() {
             }
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Update Tracking Info
         window.updateTrackingInfo = async function(orderId) {
             const trackingId = document.getElementById(`tracking-id-${orderId}`).value;
             const courierName = document.getElementById(`courier-name-${orderId}`).value;
@@ -935,7 +1004,6 @@ export default function Admin() {
             renderOrdersList(filteredOrders);
         };
 
-        // 🚀 SERVER-SIDE ROUTING: Fetch Customers
         async function loadCustomerDetails() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/customers`);
@@ -1042,6 +1110,8 @@ export default function Admin() {
                     <li className="nav-item active" onClick={(event) => window.showSection('live-products', event.currentTarget)}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className="nav-item" onClick={(event) => window.showSection('add-product', event.currentTarget)}><i className="fa-solid fa-plus"></i> Add Product</li>
                     <li className="nav-item" onClick={(event) => window.showSection('orders', event.currentTarget)}><i className="fa-solid fa-truck"></i> Orders</li>
+                    {/* 🚀 NEW TAB FOR SELLER ACCESS */}
+                    <li className="nav-item" onClick={(event) => window.showSection('seller-access', event.currentTarget)}><i className="fa-solid fa-user-shield"></i> Seller Access</li>
                     <li className="nav-item" onClick={(event) => window.showSection('site-settings', event.currentTarget)}><i className="fa-solid fa-sliders"></i> Site Settings</li>
                     <li className="nav-item" onClick={(event) => window.showSection('customer-details', event.currentTarget)}><i className="fa-solid fa-user-group"></i> Customers</li>
                 </ul>
@@ -1257,6 +1327,30 @@ export default function Admin() {
                     
                     <div id="admin-orders-list">
                         <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading orders data...</p>
+                    </div>
+                </div>
+
+                {/* 🚀 NEW: SELLER ACCESS CONTROL PANEL */}
+                <div id="seller-access" className="content-section">
+                    <span className="section-title" style={{ marginBottom: '24px' }}>Authorized Sellers (Whitelist)</span>
+                    <p className="text-helper" style={{ marginBottom: '20px' }}>Only Google Emails added to this list will be allowed to log into the JAMBAWEAR Seller Portal. This prevents unauthorized users from accessing the system.</p>
+
+                    <form className="card" style={{ marginBottom: '24px' }} onSubmit={(e) => window.addAuthorizedSeller(e)}>
+                        <span className="section-subtitle">Authorize New Seller</span>
+                        <div className="field-grid" style={{ alignItems: 'end' }}>
+                            <div className="form-group" style={{ margin: 0, flex: 1 }}>
+                                <span className="label">Seller's Google Email</span>
+                                <input type="email" id="new-seller-email" className="input-box" placeholder="e.g. bodo.weavers@gmail.com" required />
+                            </div>
+                            <button type="submit" id="add-seller-btn" className="btn-submit" style={{ width: 'auto', padding: '10px 24px', margin: 0 }}>Authorize Seller</button>
+                        </div>
+                    </form>
+
+                    <div className="card">
+                        <span className="section-subtitle">Currently Authorized Sellers</span>
+                        <div id="whitelisted-sellers-list" style={{ marginTop: '16px' }}>
+                            <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading authorized sellers...</p>
+                        </div>
                     </div>
                 </div>
 
