@@ -3,7 +3,9 @@ import { initializeApp, getApp, getApps } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { API_BASE_URL } from './apiConfig'; // 👈 IMPORTING YOUR LIVE SERVER URL
+
+// 👇 FIXED: Two dots (../) to look one folder up for the config file!
+import { API_BASE_URL } from '../apiConfig'; 
 import "./Admin.css";
 
 const firebaseConfig = {
