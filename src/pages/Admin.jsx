@@ -4,8 +4,8 @@ import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-// 👇 FIXED: Two dots (../) to look one folder up for the config file!
-import { API_BASE_URL } from '../apiConfig'; 
+// 👇 FIXED: Added explicit .js extension to the relative path
+import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Admin.css";
 
 const firebaseConfig = {
