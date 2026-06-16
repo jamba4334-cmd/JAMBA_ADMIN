@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-// 👇 NEW: Added collection, getDocs, and deleteDoc for the VIP list
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
@@ -107,12 +106,16 @@ export default function Admin() {
             window.location.reload(); 
         };
         
+        // 🚀 PERFORMANCE UPGRADE: Parallel Loading
         async function bootstrapData() {
-            await loadAdminInventory(); 
+            // These don't depend on anything, so fire them all off instantly
             loadSiteSettings();
-            loadAdminOrders(); 
             loadCustomerDetails();
-            loadWhitelistedSellers(); // 🚀 LOAD VIP SELLERS
+            loadWhitelistedSellers(); 
+            
+            // Orders need Inventory data to match items, so wait for inventory first
+            await loadAdminInventory(); 
+            loadAdminOrders(); 
         }
 
         let globalLiveProducts = [];
@@ -125,26 +128,25 @@ export default function Admin() {
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
 
-        // 🚀 NEW: SELLER WHITELISTING ENGINE
         async function loadWhitelistedSellers() {
             try {
                 const querySnapshot = await getDocs(collection(db, "whitelisted_sellers"));
                 const list = document.getElementById('whitelisted-sellers-list');
                 if(!list) return;
                 
-                list.innerHTML = '';
-                
                 if(querySnapshot.empty) {
                     list.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">No sellers currently authorized.</p>';
                     return;
                 }
                 
+                // 🚀 SPEED FIX: Build HTML in memory first
+                let htmlString = '';
                 querySnapshot.forEach((docSnap) => {
                     const email = docSnap.id;
                     const data = docSnap.data();
                     const dateAdded = data.addedAt ? new Date(data.addedAt).toLocaleDateString() : 'Unknown Date';
                     
-                    list.innerHTML += `
+                    htmlString += `
                         <div style="display:flex; justify-content: space-between; padding: 14px; border-bottom: 1px solid #f3f4f6; align-items: center; background: #fff;">
                             <div>
                                 <strong style="color: var(--primary); font-size: 14px;"><i class="fa-solid fa-user-check" style="color: var(--success); margin-right: 6px;"></i> ${email}</strong><br>
@@ -156,6 +158,8 @@ export default function Admin() {
                         </div>
                     `;
                 });
+                
+                list.innerHTML = htmlString; // Inject once
             } catch (e) {
                 console.error("Error loading VIP sellers", e);
             }
@@ -173,7 +177,6 @@ export default function Admin() {
             btn.innerText = "Authorizing...";
 
             try {
-                // Save to Firestore. Document ID is the email so there are no duplicates.
                 await setDoc(doc(db, "whitelisted_sellers", email), {
                     email: email,
                     addedAt: new Date().toISOString(),
@@ -595,12 +598,14 @@ export default function Admin() {
         function renderInventoryList(productsToRender) {
             const inventoryList = document.getElementById('admin-inventory-list');
             if(!inventoryList) return;
-            inventoryList.innerHTML = ''; 
             
             if(productsToRender.length === 0) {
                 inventoryList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No matching products found.</p>';
                 return;
             }
+
+            // 🚀 SPEED FIX: Build HTML in memory first
+            let htmlString = '';
 
             productsToRender.forEach((product) => {
                 let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
@@ -638,7 +643,7 @@ export default function Admin() {
                     }
                 }
 
-                inventoryList.innerHTML += `
+                htmlString += `
                 <div class="card" style="display: flex; gap: 24px; padding: 24px;">
                     <div style="flex: 1;">
                         <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 2px;">
@@ -663,6 +668,8 @@ export default function Admin() {
                     <img src="${mainImgUrl}" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
                 </div>`;
             });
+            
+            inventoryList.innerHTML = htmlString; // Inject once
         }
 
         window.filterInventory = function(type, btn) {
@@ -781,12 +788,14 @@ export default function Admin() {
         function renderOrdersList(ordersToRender) {
             const ordersList = document.getElementById('admin-orders-list');
             if(!ordersList) return;
-            ordersList.innerHTML = ''; 
             
             if(ordersToRender.length === 0) {
                 ordersList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No orders found matching your search.</p>';
                 return;
             }
+
+            // 🚀 SPEED FIX: Build HTML in memory first
+            let htmlString = '';
 
             ordersToRender.forEach(order => {
                 const currentStatus = order.status ? order.status.toLowerCase() : 'pending';
@@ -920,7 +929,7 @@ export default function Admin() {
                     </div>
                 `;
 
-                ordersList.innerHTML += `
+                htmlString += `
                     <div class="card" style="padding: 24px; margin-bottom: 20px;">
                         
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 16px;">
@@ -970,6 +979,8 @@ export default function Admin() {
                         ${adminActions}
                     </div>`;
             });
+
+            ordersList.innerHTML = htmlString; // Inject once
         }
 
         window.handleOrderSearch = function(searchTerm) {
@@ -1022,12 +1033,14 @@ export default function Admin() {
         function renderCustomerList(customersToRender) {
             const customerList = document.getElementById('admin-customers-list');
             if(!customerList) return;
-            customerList.innerHTML = ''; 
             
             if(customersToRender.length === 0) {
                 customerList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No customers found matching your search.</p>';
                 return;
             }
+
+            // 🚀 SPEED FIX: Build HTML in memory first
+            let htmlString = '';
 
             customersToRender.forEach(user => {
                 const roleBadge = user.role === 'admin' 
@@ -1048,7 +1061,7 @@ export default function Admin() {
                         </div>`;
                 }
 
-                customerList.innerHTML += `
+                htmlString += `
                     <div class="card" style="padding: 24px; margin-bottom: 20px;">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                             <div>
@@ -1066,6 +1079,8 @@ export default function Admin() {
                         ${savedAddrHtml}
                     </div>`;
             });
+            
+            customerList.innerHTML = htmlString; // Inject once
         }
 
         window.handleCustomerSearch = function(searchTerm) {
@@ -1110,7 +1125,6 @@ export default function Admin() {
                     <li className="nav-item active" onClick={(event) => window.showSection('live-products', event.currentTarget)}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className="nav-item" onClick={(event) => window.showSection('add-product', event.currentTarget)}><i className="fa-solid fa-plus"></i> Add Product</li>
                     <li className="nav-item" onClick={(event) => window.showSection('orders', event.currentTarget)}><i className="fa-solid fa-truck"></i> Orders</li>
-                    {/* 🚀 NEW TAB FOR SELLER ACCESS */}
                     <li className="nav-item" onClick={(event) => window.showSection('seller-access', event.currentTarget)}><i className="fa-solid fa-user-shield"></i> Seller Access</li>
                     <li className="nav-item" onClick={(event) => window.showSection('site-settings', event.currentTarget)}><i className="fa-solid fa-sliders"></i> Site Settings</li>
                     <li className="nav-item" onClick={(event) => window.showSection('customer-details', event.currentTarget)}><i className="fa-solid fa-user-group"></i> Customers</li>
@@ -1330,7 +1344,6 @@ export default function Admin() {
                     </div>
                 </div>
 
-                {/* 🚀 NEW: SELLER ACCESS CONTROL PANEL */}
                 <div id="seller-access" className="content-section">
                     <span className="section-title" style={{ marginBottom: '24px' }}>Authorized Sellers (Whitelist)</span>
                     <p className="text-helper" style={{ marginBottom: '20px' }}>Only Google Emails added to this list will be allowed to log into the JAMBAWEAR Seller Portal. This prevents unauthorized users from accessing the system.</p>
