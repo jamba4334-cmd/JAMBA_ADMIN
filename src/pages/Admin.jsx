@@ -109,7 +109,7 @@ export default function Admin() {
         async function bootstrapData() {
             loadSiteSettings();
             loadCustomerDetails();
-            loadWhitelistedSellers(); 
+            loadAuthorizedSellers(); // UPDATED FUNCTION NAME
             
             await loadAdminInventory(); 
             loadAdminOrders(); 
@@ -125,11 +125,13 @@ export default function Admin() {
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
 
-      async function loadWhitelistedSellers() {
+        // 🚀 FIXED: Now perfectly matches authorized_sellers
+        async function loadAuthorizedSellers() {
+            const list = document.getElementById('authorized-sellers-list');
+            if(!list) return;
+
             try {
-                const querySnapshot = await getDocs(collection(db, "authorised_sellers"));
-                const list = document.getElementById('authorised-sellers-list');
-                if(!list) return;
+                const querySnapshot = await getDocs(collection(db, "authorized_sellers"));
                 
                 if(querySnapshot.empty) {
                     list.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">No sellers currently authorized.</p>';
@@ -158,6 +160,7 @@ export default function Admin() {
                 list.innerHTML = htmlString;
             } catch (e) {
                 console.error("Error loading VIP sellers", e);
+                list.innerHTML = `<p style="color: var(--danger); font-size: 13px;">Error loading sellers. Check your Firebase Rules.</p>`;
             }
         }
 
@@ -173,14 +176,14 @@ export default function Admin() {
             btn.innerText = "Authorizing...";
 
             try {
-                await setDoc(doc(db, "authorised_sellers", email), {
+                await setDoc(doc(db, "authorized_sellers", email), {
                     email: email,
                     addedAt: new Date().toISOString(),
                     addedBy: ALLOWED_ADMIN_EMAIL
                 });
                 showToast(email + " has been authorized!");
                 emailInput.value = "";
-                loadWhitelistedSellers();
+                loadAuthorizedSellers();
             } catch(err) {
                 alert("Error authorizing seller: " + err.message);
             } finally {
@@ -192,15 +195,15 @@ export default function Admin() {
         window.removeAuthorizedSeller = async function(email) {
             if(confirm(`Are you absolutely sure you want to revoke access for ${email}?\n\nThey will be locked out of the Seller Portal immediately.`)) {
                 try {
-                    await deleteDoc(doc(db, "authorised_sellers", email));
+                    await deleteDoc(doc(db, "authorized_sellers", email));
                     showToast("Access revoked for " + email);
-                    loadWhitelistedSellers();
+                    loadAuthorizedSellers();
                 } catch(e) {
                     alert("Error removing seller: " + e.message);
                 }
             }
         };
- 
+
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
             const promptContent = document.getElementById('upload-prompt-content');
@@ -264,7 +267,6 @@ export default function Admin() {
             window.renderImagePreview();
         };
 
-        // 🚀 CONNECTED: PRODUCT SUBMISSION VIA BACKEND
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -364,7 +366,7 @@ export default function Admin() {
             document.getElementById('cancel-edit-btn').style.display = "none";
             showSection('live-products', document.querySelectorAll('.nav-item')[0]);
         };
- 
+
         window.toggleProductHide = async function(productId, newState) {
             await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                 method: "PUT",
@@ -577,7 +579,6 @@ export default function Admin() {
             }
         };
 
-        // 🚀 CONNECTED: INVENTORY FETCH VIA BACKEND
         async function loadAdminInventory() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/products`);
@@ -696,7 +697,6 @@ export default function Admin() {
             else { renderInventoryList(regularItems.filter(p => p.category && p.category.toLowerCase().includes(gender.toLowerCase()))); }
         };
 
-        // 🚀 CONNECTED: ORDERS FETCH VIA BACKEND
         async function loadAdminOrders() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/orders`);
@@ -1012,7 +1012,6 @@ export default function Admin() {
             renderOrdersList(filteredOrders);
         };
 
-        // 🚀 CONNECTED: CUSTOMERS FETCH VIA BACKEND
         async function loadCustomerDetails() {
             try {
                 const response = await fetch(`${API_BASE_URL}/admin/customers`);
@@ -1358,7 +1357,7 @@ export default function Admin() {
 
                     <div className="card">
                         <span className="section-subtitle">Currently Authorized Sellers</span>
-                        <div id="whitelisted-sellers-list" style={{ marginTop: '16px' }}>
+                        <div id="authorized-sellers-list" style={{ marginTop: '16px' }}>
                             <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading authorized sellers...</p>
                         </div>
                     </div>
