@@ -26,11 +26,11 @@ const storage = getStorage(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 GLOBAL VARIABLES (Safe from React re-renders)
+// Global Memory Arrays
 let globalLiveProducts = [];
 let globalOrders = [];
 let globalCustomers = [];
-let globalSellers = []; // Stores seller profiles for the modal
+let globalSellers = []; 
 let editingProductId = null;
 let currentEditImageUrls = [];
 let selectedFiles = [];        
@@ -38,14 +38,16 @@ let activeWomenVideoUrl = "";
 let activeMenVideoUrl = "";
 
 export default function Admin() {
-    // 🚀 NEW: React State for Navigation and CRM Modal
     const [activeTab, setActiveTab] = useState("live-products");
     const [selectedSeller, setSelectedSeller] = useState(null);
     const [sellerModalTab, setSellerModalTab] = useState("profile");
     const [sellerPayouts, setSellerPayouts] = useState([]);
+    
+    // 🚀 NEW: Global state for pending payout notifications
+    const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
 
     useEffect(() => {
-        // Safe React Navigation
+
         window.showSection = function(sectionId) {
             setActiveTab(sectionId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -121,13 +123,24 @@ export default function Admin() {
          
         async function bootstrapData() {
             loadSiteSettings();
-             loadCustomerDetails();
+            loadCustomerDetails();
             await loadAdminInventory(); 
             loadAdminOrders(); 
             window.loadAuthorizedSellers(); 
+            window.loadGlobalPayouts(); // 🚀 NEW: Load pending notifications on boot
         }
 
-        // 🚀 UPGRADED: Fetches Sellers AND their Store Profiles
+        // 🚀 NEW: Checks entire database for ANY pending payouts
+        window.loadGlobalPayouts = async function() {
+            try {
+                const q = query(collection(db, "payout_requests"), where("status", "==", "pending"));
+                const snap = await getDocs(q);
+                setGlobalPendingPayouts(snap.size);
+            } catch(e) {
+                console.error("Error loading global payouts:", e);
+            }
+        };
+
         window.loadAuthorizedSellers = async function() {
             const list = document.getElementById('authorized-sellers-list');
             if(!list) return;
@@ -185,7 +198,6 @@ export default function Admin() {
             }
         };
 
-        // 🚀 NEW: Opens the Seller Modal
         window.openSellerDetails = async function(email) {
             const seller = globalSellers.find(s => s.email === email);
             if(!seller) return;
@@ -475,7 +487,6 @@ export default function Admin() {
             }
         };
 
-        // 🚀 FIXED: ID LOOKUP INSTEAD OF HTML STRING INJECTION
         window.editProduct = function(productId) {
             const product = globalLiveProducts.find(p => p.docId === productId);
             if (!product) {
@@ -765,7 +776,7 @@ export default function Admin() {
                         </div>
                         <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 4px;">${product.title}</div>
                         <div style="font-size: 14px; color: var(--text-main); margin-bottom: 16px;">
-                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${displayCategory} &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; Stock: <strong>${product.stock || 0}</strong>
+                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${displayCategory}
                         </div>
                         <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding-top: 16px; border-top: 1px solid #f3f4f6;">
                             ${actionButtonsHtml}
@@ -963,7 +974,6 @@ export default function Admin() {
                 }
 
                 const locationStr = city ? `${city}, ${state} - ${pincode}` : '';
-                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Seller Preparing Item</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Waiting for Seller</span>';
 
                 const blackBoxHtml = `
                     <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
@@ -975,7 +985,7 @@ export default function Admin() {
                         <a href="tel:${sellerPhone}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-phone"></i> ${sellerPhone}</a>
                     </div>
                     <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; color: var(--text-muted); line-height: 1.4;">
-                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span> ${isSellerAccepted}<br>
+                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span><br>
                         ${pickupAddress}<br>
                         ${locationStr}
                     </div>
@@ -1210,7 +1220,6 @@ export default function Admin() {
 
     }, []);
 
-    // 🚀 NEW: Admin Saving the Seller's Profile directly from Modal
     const handleAdminSaveSellerProfile = async (e) => {
         e.preventDefault();
         const btn = document.getElementById('admin-save-prof-btn');
@@ -1242,7 +1251,6 @@ export default function Admin() {
         }
     };
 
-    // 🚀 NEW: Admin Processing Payouts
     const handleMarkPayoutPaid = async (payoutId) => {
         const utr = prompt("Enter Bank Transfer UTR/Reference Number:");
         if(!utr) return;
@@ -1256,6 +1264,9 @@ export default function Admin() {
             
             setSellerPayouts(prev => prev.map(p => p.id === payoutId ? { ...p, status: 'paid', utr: utr } : p));
             window.showToast("Payout Marked as Paid!");
+            
+            // 🚀 NEW: Update global badge count after paying out
+            window.loadGlobalPayouts();
         } catch(e) {
             alert("Error updating payout: " + e.message);
         }
@@ -1285,7 +1296,13 @@ export default function Admin() {
                     <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
                     <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
-                    <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}><i className="fa-solid fa-store"></i> Seller Directory</li>
+                    
+                    {/* 🚀 UPGRADED: Seller Directory Tab with Notification Badge */}
+                    <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}>
+                        <i className="fa-solid fa-store"></i> Seller Directory
+                        {globalPendingPayouts > 0 && <span className="sidebar-badge">{globalPendingPayouts}</span>}
+                    </li>
+
                     <li className={`nav-item ${activeTab === 'site-settings' ? 'active' : ''}`} onClick={() => window.showSection('site-settings')}><i className="fa-solid fa-sliders"></i> Site Settings</li>
                     <li className={`nav-item ${activeTab === 'customer-details' ? 'active' : ''}`} onClick={() => window.showSection('customer-details')}><i className="fa-solid fa-user-group"></i> Customers</li>
                 </ul>
@@ -1607,8 +1624,7 @@ export default function Admin() {
                     </div>
                 </div>
             </div>
-
-            {/* 🚀 NEW: THE SELLER CRM MODAL (React State Driven) */}
+ 
             {selectedSeller && (
                 <div className="admin-modal-overlay">
                     <div className="admin-modal-content">
@@ -1624,8 +1640,17 @@ export default function Admin() {
                         <div className="admin-modal-tabs">
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'profile' ? 'active' : ''}`} onClick={() => setSellerModalTab('profile')}>Store Profile</button>
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'catalog' ? 'active' : ''}`} onClick={() => setSellerModalTab('catalog')}>Catalog & Stock ({selectedSeller.products.length})</button>
-                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'orders' ? 'active' : ''}`} onClick={() => setSellerModalTab('orders')}>Fulfillment ({selectedSeller.orders.length})</button>
-                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'finance' ? 'active' : ''}`} onClick={() => setSellerModalTab('finance')}>Financials & Payouts</button>
+                            
+                            {/* 🚀 UPGRADED: Renamed Tab to "Orders" */}
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'orders' ? 'active' : ''}`} onClick={() => setSellerModalTab('orders')}>Orders ({selectedSeller.orders.length})</button>
+                            
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'finance' ? 'active' : ''}`} onClick={() => setSellerModalTab('finance')}>
+                                Financials & Payouts
+                                {/* 🚀 NEW: Notification Badge inside the modal tab */}
+                                {sellerPayouts.filter(p => p.status === 'pending').length > 0 && (
+                                    <span className="tab-badge">{sellerPayouts.filter(p => p.status === 'pending').length}</span>
+                                )}
+                            </button>
                         </div>
 
                         <div className="admin-modal-body">
@@ -1671,7 +1696,7 @@ export default function Admin() {
                                 </div>
                             )}
 
-                            {/* TAB 3: FULFILLMENT */}
+                            {/* TAB 3: FULFILLMENT (Now Orders) */}
                             {sellerModalTab === 'orders' && (
                                 <div>
                                     {selectedSeller.orders.length === 0 ? <p style={{color: 'var(--text-muted)'}}>No orders to fulfill yet.</p> : null}
