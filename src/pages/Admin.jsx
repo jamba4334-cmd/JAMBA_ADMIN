@@ -109,7 +109,7 @@ export default function Admin() {
         async function bootstrapData() {
             loadSiteSettings();
             loadCustomerDetails();
-            loadAuthorizedSellers(); // UPDATED FUNCTION NAME
+            loadAuthorizedSellers(); 
             
             await loadAdminInventory(); 
             loadAdminOrders(); 
@@ -125,8 +125,7 @@ export default function Admin() {
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
 
-        // 🚀 FIXED: Now perfectly matches authorized_sellers
-        async function loadAuthorizedSellers() {
+         async function loadAuthorizedSellers() {
             const list = document.getElementById('authorized-sellers-list');
             if(!list) return;
 
@@ -317,7 +316,8 @@ export default function Admin() {
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
                     isHidden: false,
-                    isOutOfStock: false 
+                    isOutOfStock: false,
+                    approval_status: "approved" // Admin uploads are automatically approved
                 };
 
                 const method = editingProductId ? "PUT" : "POST";
@@ -365,6 +365,39 @@ export default function Admin() {
             document.getElementById('submit-btn').innerText = "Save Product to Database";
             document.getElementById('cancel-edit-btn').style.display = "none";
             showSection('live-products', document.querySelectorAll('.nav-item')[0]);
+        };
+
+        // 🚀 NEW: PRODUCT APPROVAL WORKFLOW
+        window.approveProduct = async function(productId) {
+            if(confirm("Approve this product and make it live on the store?")) {
+                try {
+                    await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
+                        method: "PUT",
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ approval_status: 'approved', isHidden: false })
+                    });
+                    showToast("Product Approved & Published!");
+                    loadAdminInventory();
+                } catch (e) {
+                    alert("Error approving product: " + e.message);
+                }
+            }
+        };
+
+        window.rejectProduct = async function(productId) {
+            if(confirm("Reject this product? The seller will be notified in their dashboard.")) {
+                try {
+                    await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
+                        method: "PUT",
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ approval_status: 'rejected', isHidden: true })
+                    });
+                    showToast("Product Rejected.");
+                    loadAdminInventory();
+                } catch (e) {
+                    alert("Error rejecting product: " + e.message);
+                }
+            }
         };
 
         window.toggleProductHide = async function(productId, newState) {
@@ -433,7 +466,7 @@ export default function Admin() {
             document.getElementById('cancel-edit-btn').style.display = "block";
             showSection('add-product', document.querySelectorAll('.nav-item')[1]);
         };
- 
+
         async function loadSiteSettings() {
             try {
                 const docRef = doc(db, "settings", "hero_banners");
@@ -613,18 +646,47 @@ export default function Admin() {
 
                 const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
                 
+                // 🚀 NEW: Setup Badges based on Approval Status
                 const placementText = product.placement === 'hero' ? '<span class="hero-badge"><i class="fa-solid fa-star"></i> Hero</span>' : '';
-                const hiddenBadge = product.isHidden ? '<span class="hero-badge" style="background-color: #9CA3AF;"><i class="fa-solid fa-eye-slash"></i> Hidden</span>' : '';
-                const oosBadge = product.isOutOfStock ? '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-ban"></i> Out Of Stock</span>' : '';
-                
                 const isHidden = product.isHidden || false;
                 const isOOS = product.isOutOfStock || false;
 
-                const hideBtnText = isHidden ? '<i class="fa-solid fa-eye-slash"></i> Hidden' : '<i class="fa-solid fa-eye"></i> Visible';
-                const hideBtnClass = isHidden ? 'btn-status-hidden' : 'btn-status-active';
+                let approvalBadge = '';
+                if (product.approval_status === 'pending') {
+                    approvalBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Approval</span>';
+                } else if (product.approval_status === 'rejected') {
+                    approvalBadge = '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-xmark"></i> Rejected</span>';
+                } else {
+                    approvalBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check-double"></i> Approved</span>';
+                }
 
-                const stockBtnText = isOOS ? '<i class="fa-solid fa-ban"></i> Out of Stock' : '<i class="fa-solid fa-box"></i> In Stock';
-                const stockBtnClass = isOOS ? 'btn-status-inactive' : 'btn-status-active';
+                const hiddenBadge = isHidden ? '<span class="hero-badge" style="background-color: #9CA3AF;"><i class="fa-solid fa-eye-slash"></i> Hidden</span>' : '';
+                const oosBadge = isOOS ? '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-ban"></i> Out Of Stock</span>' : '';
+                
+                // 🚀 NEW: Dynamic action buttons based on status
+                let actionButtonsHtml = '';
+                if (product.approval_status === 'pending') {
+                    actionButtonsHtml = `
+                        <button class="action-btn" style="background: var(--success); color: white;" onclick="window.approveProduct('${product.docId}')"><i class="fa-solid fa-check"></i> Approve & Publish</button>
+                        <button class="action-btn" style="background: var(--danger); color: white;" onclick="window.rejectProduct('${product.docId}')"><i class="fa-solid fa-xmark"></i> Reject</button>
+                        <div style="flex-grow: 1;"></div>
+                        <button class="action-btn btn-edit" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Review Details</button>
+                    `;
+                } else {
+                    const hideBtnText = isHidden ? '<i class="fa-solid fa-eye-slash"></i> Hidden' : '<i class="fa-solid fa-eye"></i> Visible';
+                    const hideBtnClass = isHidden ? 'btn-status-hidden' : 'btn-status-active';
+                    const stockBtnText = isOOS ? '<i class="fa-solid fa-ban"></i> Out of Stock' : '<i class="fa-solid fa-box"></i> In Stock';
+                    const stockBtnClass = isOOS ? 'btn-status-inactive' : 'btn-status-active';
+
+                    actionButtonsHtml = `
+                        <button class="action-btn btn-edit" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
+                        <div style="width: 1px; height: 16px; background: #e5e7eb; margin: 0 4px;"></div>
+                        <button class="action-btn ${hideBtnClass}" onclick="window.toggleProductHide('${product.docId}', ${!isHidden})">${hideBtnText}</button>
+                        <button class="action-btn ${stockBtnClass}" onclick="window.toggleProductStock('${product.docId}', ${!isOOS})">${stockBtnText}</button>
+                        <div style="flex-grow: 1;"></div>
+                        <button class="action-btn btn-delete" onclick="window.deleteProduct('${product.docId}')"><i class="fa-solid fa-trash"></i></button>
+                    `;
+                }
 
                 const dateStr = product.created_at ? new Date(product.created_at).toLocaleDateString('en-IN', {day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : 'Unknown Date';
 
@@ -641,25 +703,20 @@ export default function Admin() {
                 }
 
                 htmlString += `
-                <div class="card" style="display: flex; gap: 24px; padding: 24px;">
+                <div class="card" style="display: flex; gap: 24px; padding: 24px; border: ${product.approval_status === 'pending' ? '2px solid var(--accent)' : '1px solid #e5e7eb'}">
                     <div style="flex: 1;">
                         <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 2px;">
-                            ID: ${product.item_id || product.docId} ${placementText} ${hiddenBadge} ${oosBadge}
+                            ID: ${product.item_id || product.docId} ${placementText} ${approvalBadge} ${hiddenBadge} ${oosBadge}
                         </div>
                         <div style="font-size: 11px; color: #9CA3AF; margin-bottom: 8px;">
-                            <i class="fa-regular fa-clock"></i> Uploaded: ${dateStr}
+                            <i class="fa-regular fa-clock"></i> Uploaded: ${dateStr} | By: ${product.sellerEmail || 'Admin'}
                         </div>
                         <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 4px;">${product.title}</div>
                         <div style="font-size: 14px; color: var(--text-main); margin-bottom: 16px;">
                             <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${displayCategory}
                         </div>
                         <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding-top: 16px; border-top: 1px solid #f3f4f6;">
-                            <button class="action-btn btn-edit" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
-                            <div style="width: 1px; height: 16px; background: #e5e7eb; margin: 0 4px;"></div>
-                            <button class="action-btn ${hideBtnClass}" onclick="window.toggleProductHide('${product.docId}', ${!isHidden})">${hideBtnText}</button>
-                            <button class="action-btn ${stockBtnClass}" onclick="window.toggleProductStock('${product.docId}', ${!isOOS})">${stockBtnText}</button>
-                            <div style="flex-grow: 1;"></div>
-                            <button class="action-btn btn-delete" onclick="window.deleteProduct('${product.docId}')"><i class="fa-solid fa-trash"></i></button>
+                            ${actionButtonsHtml}
                         </div>
                     </div>
                     <img src="${mainImgUrl}" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
@@ -677,6 +734,9 @@ export default function Admin() {
             if (type === 'all') {
                 subFilterRow.style.display = 'none';
                 renderInventoryList(globalLiveProducts);
+            } else if (type === 'pending') {
+                subFilterRow.style.display = 'none';
+                renderInventoryList(globalLiveProducts.filter(p => p.approval_status === 'pending'));
             } else if (type === 'hero') {
                 subFilterRow.style.display = 'none';
                 renderInventoryList(globalLiveProducts.filter(p => p.placement === 'hero'));
@@ -1139,6 +1199,7 @@ export default function Admin() {
                             <span className="section-title">Current Inventory</span>
                             <div className="filter-group">
                                 <button className="filter-btn active" onClick={(event) => window.filterInventory('all', event.currentTarget)}>All</button>
+                                <button className="filter-btn" onClick={(event) => window.filterInventory('pending', event.currentTarget)} style={{color: 'var(--accent)'}}>⚠️ Needs Approval</button>
                                 <button className="filter-btn" onClick={(event) => window.filterInventory('hero', event.currentTarget)}>Homepage Hero</button>
                                 <button className="filter-btn" onClick={(event) => window.filterInventory('regular', event.currentTarget)}>Regular Collection</button>
                             </div>
