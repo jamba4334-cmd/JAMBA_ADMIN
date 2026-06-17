@@ -127,8 +127,8 @@ export default function Admin() {
 
       async function loadWhitelistedSellers() {
             try {
-                const querySnapshot = await getDocs(collection(db, "whitelisted_sellers"));
-                const list = document.getElementById('whitelisted-sellers-list');
+                const querySnapshot = await getDocs(collection(db, "authorised_sellers"));
+                const list = document.getElementById('authorised-sellers-list');
                 if(!list) return;
                 
                 if(querySnapshot.empty) {
@@ -173,7 +173,7 @@ export default function Admin() {
             btn.innerText = "Authorizing...";
 
             try {
-                await setDoc(doc(db, "whitelisted_sellers", email), {
+                await setDoc(doc(db, "authorised_sellers", email), {
                     email: email,
                     addedAt: new Date().toISOString(),
                     addedBy: ALLOWED_ADMIN_EMAIL
@@ -192,7 +192,7 @@ export default function Admin() {
         window.removeAuthorizedSeller = async function(email) {
             if(confirm(`Are you absolutely sure you want to revoke access for ${email}?\n\nThey will be locked out of the Seller Portal immediately.`)) {
                 try {
-                    await deleteDoc(doc(db, "whitelisted_sellers", email));
+                    await deleteDoc(doc(db, "authorised_sellers", email));
                     showToast("Access revoked for " + email);
                     loadWhitelistedSellers();
                 } catch(e) {
