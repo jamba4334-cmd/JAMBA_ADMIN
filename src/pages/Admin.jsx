@@ -43,7 +43,7 @@ export default function Admin() {
     const [sellerModalTab, setSellerModalTab] = useState("profile");
     const [sellerPayouts, setSellerPayouts] = useState([]);
     
-    // 🚀 NEW: Global state for pending payout notifications
+    // Global state for pending payout notifications
     const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
 
     useEffect(() => {
@@ -127,10 +127,9 @@ export default function Admin() {
             await loadAdminInventory(); 
             loadAdminOrders(); 
             window.loadAuthorizedSellers(); 
-            window.loadGlobalPayouts(); // 🚀 NEW: Load pending notifications on boot
+            window.loadGlobalPayouts(); 
         }
 
-        // 🚀 NEW: Checks entire database for ANY pending payouts
         window.loadGlobalPayouts = async function() {
             try {
                 const q = query(collection(db, "payout_requests"), where("status", "==", "pending"));
@@ -974,6 +973,7 @@ export default function Admin() {
                 }
 
                 const locationStr = city ? `${city}, ${state} - ${pincode}` : '';
+                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Seller Preparing Item</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Waiting for Seller</span>';
 
                 const blackBoxHtml = `
                     <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
@@ -985,7 +985,7 @@ export default function Admin() {
                         <a href="tel:${sellerPhone}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-phone"></i> ${sellerPhone}</a>
                     </div>
                     <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; color: var(--text-muted); line-height: 1.4;">
-                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span><br>
+                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span> ${isSellerAccepted}<br>
                         ${pickupAddress}<br>
                         ${locationStr}
                     </div>
@@ -1265,7 +1265,7 @@ export default function Admin() {
             setSellerPayouts(prev => prev.map(p => p.id === payoutId ? { ...p, status: 'paid', utr: utr } : p));
             window.showToast("Payout Marked as Paid!");
             
-            // 🚀 NEW: Update global badge count after paying out
+            // Update global badge count after paying out
             window.loadGlobalPayouts();
         } catch(e) {
             alert("Error updating payout: " + e.message);
@@ -1297,7 +1297,6 @@ export default function Admin() {
                     <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
                     <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
                     
-                    {/* 🚀 UPGRADED: Seller Directory Tab with Notification Badge */}
                     <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}>
                         <i className="fa-solid fa-store"></i> Seller Directory
                         {globalPendingPayouts > 0 && <span className="sidebar-badge">{globalPendingPayouts}</span>}
@@ -1624,7 +1623,7 @@ export default function Admin() {
                     </div>
                 </div>
             </div>
- 
+
             {selectedSeller && (
                 <div className="admin-modal-overlay">
                     <div className="admin-modal-content">
@@ -1640,13 +1639,9 @@ export default function Admin() {
                         <div className="admin-modal-tabs">
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'profile' ? 'active' : ''}`} onClick={() => setSellerModalTab('profile')}>Store Profile</button>
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'catalog' ? 'active' : ''}`} onClick={() => setSellerModalTab('catalog')}>Catalog & Stock ({selectedSeller.products.length})</button>
-                            
-                            {/* 🚀 UPGRADED: Renamed Tab to "Orders" */}
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'orders' ? 'active' : ''}`} onClick={() => setSellerModalTab('orders')}>Orders ({selectedSeller.orders.length})</button>
-                            
                             <button type="button" className={`admin-modal-tab ${sellerModalTab === 'finance' ? 'active' : ''}`} onClick={() => setSellerModalTab('finance')}>
                                 Financials & Payouts
-                                {/* 🚀 NEW: Notification Badge inside the modal tab */}
                                 {sellerPayouts.filter(p => p.status === 'pending').length > 0 && (
                                     <span className="tab-badge">{sellerPayouts.filter(p => p.status === 'pending').length}</span>
                                 )}
@@ -1696,7 +1691,7 @@ export default function Admin() {
                                 </div>
                             )}
 
-                            {/* TAB 3: FULFILLMENT (Now Orders) */}
+                            {/* TAB 3: ORDERS */}
                             {sellerModalTab === 'orders' && (
                                 <div>
                                     {selectedSeller.orders.length === 0 ? <p style={{color: 'var(--text-muted)'}}>No orders to fulfill yet.</p> : null}
