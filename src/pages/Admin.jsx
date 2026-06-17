@@ -1,9 +1,10 @@
 import React, { useEffect } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, addDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
+import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Admin.css";
 
 const firebaseConfig = {
@@ -104,8 +105,7 @@ export default function Admin() {
             await signOut(auth);
             window.location.reload(); 
         };
-        
-        // 🚀 SERVERLESS DATA BOOTSTRAP
+         
         async function bootstrapData() {
             loadSiteSettings();
             loadCustomerDetails();
@@ -125,8 +125,7 @@ export default function Admin() {
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
 
-        // 🚀 SERVERLESS: MANAGE WHITELISTED SELLERS
-        async function loadWhitelistedSellers() {
+      async function loadWhitelistedSellers() {
             try {
                 const querySnapshot = await getDocs(collection(db, "whitelisted_sellers"));
                 const list = document.getElementById('whitelisted-sellers-list');
@@ -156,7 +155,7 @@ export default function Admin() {
                     `;
                 });
                 
-                list.innerHTML = htmlString; 
+                list.innerHTML = htmlString;
             } catch (e) {
                 console.error("Error loading VIP sellers", e);
             }
@@ -201,8 +200,7 @@ export default function Admin() {
                 }
             }
         };
-
-        // --- IMAGE PREVIEW LOGIC ---
+ 
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
             const promptContent = document.getElementById('upload-prompt-content');
@@ -266,7 +264,7 @@ export default function Admin() {
             window.renderImagePreview();
         };
 
-        // 🚀 SERVERLESS: ADD/EDIT PRODUCT
+        // 🚀 CONNECTED: PRODUCT SUBMISSION VIA BACKEND
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -320,16 +318,18 @@ export default function Admin() {
                     isOutOfStock: false 
                 };
 
-                if (editingProductId) {
-                    productData.updated_at = new Date().toISOString();
-                    await updateDoc(doc(db, "products", editingProductId), productData);
-                    showToast("Product Updated Successfully!");
-                } else {
-                    productData.item_id = "JW" + Date.now().toString().slice(-6);
-                    productData.created_at = new Date().toISOString();
-                    await addDoc(collection(db, "products"), productData);
-                    showToast("New Product Added Successfully!");
-                }
+                const method = editingProductId ? "PUT" : "POST";
+                const endpoint = editingProductId ? `${API_BASE_URL}/admin/products/${editingProductId}` : `${API_BASE_URL}/admin/products`;
+
+                const response = await fetch(endpoint, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(productData)
+                });
+
+                if (!response.ok) throw new Error("Failed to save product on server.");
+
+                showToast(editingProductId ? "Product Updated Successfully!" : "New Product Added Successfully!");
 
                 document.getElementById('new-product-form').reset();
                 document.getElementById('p-pay-cod').checked = true; 
@@ -364,21 +364,28 @@ export default function Admin() {
             document.getElementById('cancel-edit-btn').style.display = "none";
             showSection('live-products', document.querySelectorAll('.nav-item')[0]);
         };
-
-        // 🚀 SERVERLESS: TOGGLE HIDE/STOCK & DELETE
+ 
         window.toggleProductHide = async function(productId, newState) {
-            await updateDoc(doc(db, "products", productId), { isHidden: newState });
+            await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
+                method: "PUT",
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isHidden: newState })
+            });
             loadAdminInventory();
         };
 
         window.toggleProductStock = async function(productId, newState) {
-            await updateDoc(doc(db, "products", productId), { isOutOfStock: newState });
+            await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
+                method: "PUT",
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isOutOfStock: newState })
+            });
             loadAdminInventory();
         };
 
         window.deleteProduct = async function(productId) {
             if(confirm("Are you sure you want to completely delete this product?")) {
-                await deleteDoc(doc(db, "products", productId));
+                await fetch(`${API_BASE_URL}/admin/products/${productId}`, { method: "DELETE" });
                 loadAdminInventory();
             }
         };
@@ -424,8 +431,7 @@ export default function Admin() {
             document.getElementById('cancel-edit-btn').style.display = "block";
             showSection('add-product', document.querySelectorAll('.nav-item')[1]);
         };
-
-        // --- CMS SETTINGS ---
+ 
         async function loadSiteSettings() {
             try {
                 const docRef = doc(db, "settings", "hero_banners");
@@ -449,8 +455,7 @@ export default function Admin() {
                             loginImgInput.value = data.login_image_url;
                             window.updateLoginImagePreview(data.login_image_url);
                         }
-                    }
-
+                     }
                 } else {
                     document.getElementById('current-women-status').innerText = "No Video Uploaded";
                     document.getElementById('current-men-status').innerText = "No Video Uploaded";
@@ -572,15 +577,14 @@ export default function Admin() {
             }
         };
 
-        // 🚀 SERVERLESS INVENTORY LOAD
+        // 🚀 CONNECTED: INVENTORY FETCH VIA BACKEND
         async function loadAdminInventory() {
             try {
-                const querySnapshot = await getDocs(collection(db, "products"));
-                globalLiveProducts = [];
-                querySnapshot.forEach((docSnap) => {
-                    globalLiveProducts.push({ docId: docSnap.id, ...docSnap.data() });
-                });
+                const response = await fetch(`${API_BASE_URL}/admin/products`);
+                if (!response.ok) throw new Error("Failed to load inventory.");
                 
+                const data = await response.json();
+                globalLiveProducts = data;
                 globalLiveProducts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
                 renderInventoryList(globalLiveProducts);
             } catch (err) {
@@ -692,15 +696,14 @@ export default function Admin() {
             else { renderInventoryList(regularItems.filter(p => p.category && p.category.toLowerCase().includes(gender.toLowerCase()))); }
         };
 
-        // 🚀 SERVERLESS ORDERS LOAD
+        // 🚀 CONNECTED: ORDERS FETCH VIA BACKEND
         async function loadAdminOrders() {
             try {
-                const querySnapshot = await getDocs(collection(db, "orders"));
-                globalOrders = [];
-                querySnapshot.forEach(docSnap => {
-                    globalOrders.push({ id: docSnap.id, ...docSnap.data() });
-                });
-
+                const response = await fetch(`${API_BASE_URL}/admin/orders`);
+                if (!response.ok) throw new Error("Failed to load orders.");
+                
+                const data = await response.json();
+                globalOrders = data;
                 globalOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
                 renderOrdersList(globalOrders);
             } catch (error) {
@@ -712,7 +715,11 @@ export default function Admin() {
         window.updateOrderStatus = async function(orderId, newStatus) {
             if(confirm(`Are you sure you want to mark this order as ${newStatus.toUpperCase()}?`)) {
                 try {
-                    await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+                    await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
+                        method: "PUT",
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: newStatus })
+                    });
                     loadAdminOrders();
                     showToast("Order Status Updated");
                 } catch(e) {
@@ -735,7 +742,11 @@ export default function Admin() {
             btn.disabled = true;
 
             try {
-                await updateDoc(doc(db, "orders", orderId), { trackingId: trackingId, courierName: courierName });
+                await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
+                    method: "PUT",
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trackingId: trackingId, courierName: courierName })
+                });
                 showToast("Tracking Info Saved Successfully!");
                 loadAdminOrders();
             } catch(e) {
@@ -1001,15 +1012,14 @@ export default function Admin() {
             renderOrdersList(filteredOrders);
         };
 
-        // 🚀 SERVERLESS CUSTOMER LOAD
+        // 🚀 CONNECTED: CUSTOMERS FETCH VIA BACKEND
         async function loadCustomerDetails() {
             try {
-                const querySnapshot = await getDocs(collection(db, "users"));
-                globalCustomers = [];
-                querySnapshot.forEach(docSnap => {
-                    globalCustomers.push({ id: docSnap.id, ...docSnap.data() });
-                });
-
+                const response = await fetch(`${API_BASE_URL}/admin/customers`);
+                if (!response.ok) throw new Error("Failed to load customers.");
+                
+                const data = await response.json();
+                globalCustomers = data;
                 globalCustomers.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
                 renderCustomerList(globalCustomers);
             } catch (error) {
