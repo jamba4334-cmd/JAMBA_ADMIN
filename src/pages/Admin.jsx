@@ -1,10 +1,9 @@
 import React, { useEffect } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, addDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Admin.css";
 
 const firebaseConfig = {
@@ -106,14 +105,12 @@ export default function Admin() {
             window.location.reload(); 
         };
         
-        // 🚀 PERFORMANCE UPGRADE: Parallel Loading
+        // 🚀 SERVERLESS DATA BOOTSTRAP
         async function bootstrapData() {
-            // These don't depend on anything, so fire them all off instantly
             loadSiteSettings();
             loadCustomerDetails();
             loadWhitelistedSellers(); 
             
-            // Orders need Inventory data to match items, so wait for inventory first
             await loadAdminInventory(); 
             loadAdminOrders(); 
         }
@@ -128,6 +125,7 @@ export default function Admin() {
         let activeWomenVideoUrl = "";
         let activeMenVideoUrl = "";
 
+        // 🚀 SERVERLESS: MANAGE WHITELISTED SELLERS
         async function loadWhitelistedSellers() {
             try {
                 const querySnapshot = await getDocs(collection(db, "whitelisted_sellers"));
@@ -139,7 +137,6 @@ export default function Admin() {
                     return;
                 }
                 
-                // 🚀 SPEED FIX: Build HTML in memory first
                 let htmlString = '';
                 querySnapshot.forEach((docSnap) => {
                     const email = docSnap.id;
@@ -159,7 +156,7 @@ export default function Admin() {
                     `;
                 });
                 
-                list.innerHTML = htmlString; // Inject once
+                list.innerHTML = htmlString; 
             } catch (e) {
                 console.error("Error loading VIP sellers", e);
             }
@@ -205,6 +202,7 @@ export default function Admin() {
             }
         };
 
+        // --- IMAGE PREVIEW LOGIC ---
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
             const promptContent = document.getElementById('upload-prompt-content');
@@ -268,6 +266,7 @@ export default function Admin() {
             window.renderImagePreview();
         };
 
+        // 🚀 SERVERLESS: ADD/EDIT PRODUCT
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -321,18 +320,16 @@ export default function Admin() {
                     isOutOfStock: false 
                 };
 
-                const method = editingProductId ? "PUT" : "POST";
-                const endpoint = editingProductId ? `${API_BASE_URL}/admin/products/${editingProductId}` : `${API_BASE_URL}/admin/products`;
-
-                const response = await fetch(endpoint, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(productData)
-                });
-
-                if (!response.ok) throw new Error("Failed to save product on server.");
-
-                showToast(editingProductId ? "Product Updated Successfully!" : "New Product Added Successfully!");
+                if (editingProductId) {
+                    productData.updated_at = new Date().toISOString();
+                    await updateDoc(doc(db, "products", editingProductId), productData);
+                    showToast("Product Updated Successfully!");
+                } else {
+                    productData.item_id = "JW" + Date.now().toString().slice(-6);
+                    productData.created_at = new Date().toISOString();
+                    await addDoc(collection(db, "products"), productData);
+                    showToast("New Product Added Successfully!");
+                }
 
                 document.getElementById('new-product-form').reset();
                 document.getElementById('p-pay-cod').checked = true; 
@@ -368,27 +365,20 @@ export default function Admin() {
             showSection('live-products', document.querySelectorAll('.nav-item')[0]);
         };
 
+        // 🚀 SERVERLESS: TOGGLE HIDE/STOCK & DELETE
         window.toggleProductHide = async function(productId, newState) {
-            await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
-                method: "PUT",
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ isHidden: newState })
-            });
+            await updateDoc(doc(db, "products", productId), { isHidden: newState });
             loadAdminInventory();
         };
 
         window.toggleProductStock = async function(productId, newState) {
-            await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
-                method: "PUT",
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ isOutOfStock: newState })
-            });
+            await updateDoc(doc(db, "products", productId), { isOutOfStock: newState });
             loadAdminInventory();
         };
 
         window.deleteProduct = async function(productId) {
             if(confirm("Are you sure you want to completely delete this product?")) {
-                await fetch(`${API_BASE_URL}/admin/products/${productId}`, { method: "DELETE" });
+                await deleteDoc(doc(db, "products", productId));
                 loadAdminInventory();
             }
         };
@@ -435,6 +425,7 @@ export default function Admin() {
             showSection('add-product', document.querySelectorAll('.nav-item')[1]);
         };
 
+        // --- CMS SETTINGS ---
         async function loadSiteSettings() {
             try {
                 const docRef = doc(db, "settings", "hero_banners");
@@ -581,13 +572,15 @@ export default function Admin() {
             }
         };
 
+        // 🚀 SERVERLESS INVENTORY LOAD
         async function loadAdminInventory() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/products`);
-                if (!response.ok) throw new Error("Failed to load inventory.");
+                const querySnapshot = await getDocs(collection(db, "products"));
+                globalLiveProducts = [];
+                querySnapshot.forEach((docSnap) => {
+                    globalLiveProducts.push({ docId: docSnap.id, ...docSnap.data() });
+                });
                 
-                const data = await response.json();
-                globalLiveProducts = data;
                 globalLiveProducts.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
                 renderInventoryList(globalLiveProducts);
             } catch (err) {
@@ -604,7 +597,6 @@ export default function Admin() {
                 return;
             }
 
-            // 🚀 SPEED FIX: Build HTML in memory first
             let htmlString = '';
 
             productsToRender.forEach((product) => {
@@ -614,7 +606,7 @@ export default function Admin() {
                     mainImgUrl = mainImgUrl.replace('/upload/', '/upload/w_150,c_fill,q_auto/');
                 }
 
-                const productJson = encodeURIComponent(JSON.stringify(product));
+                const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
                 
                 const placementText = product.placement === 'hero' ? '<span class="hero-badge"><i class="fa-solid fa-star"></i> Hero</span>' : '';
                 const hiddenBadge = product.isHidden ? '<span class="hero-badge" style="background-color: #9CA3AF;"><i class="fa-solid fa-eye-slash"></i> Hidden</span>' : '';
@@ -669,7 +661,7 @@ export default function Admin() {
                 </div>`;
             });
             
-            inventoryList.innerHTML = htmlString; // Inject once
+            inventoryList.innerHTML = htmlString; 
         }
 
         window.filterInventory = function(type, btn) {
@@ -700,13 +692,15 @@ export default function Admin() {
             else { renderInventoryList(regularItems.filter(p => p.category && p.category.toLowerCase().includes(gender.toLowerCase()))); }
         };
 
+        // 🚀 SERVERLESS ORDERS LOAD
         async function loadAdminOrders() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/orders`);
-                if (!response.ok) throw new Error("Failed to load orders.");
-                
-                const data = await response.json();
-                globalOrders = data;
+                const querySnapshot = await getDocs(collection(db, "orders"));
+                globalOrders = [];
+                querySnapshot.forEach(docSnap => {
+                    globalOrders.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
                 globalOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
                 renderOrdersList(globalOrders);
             } catch (error) {
@@ -718,11 +712,7 @@ export default function Admin() {
         window.updateOrderStatus = async function(orderId, newStatus) {
             if(confirm(`Are you sure you want to mark this order as ${newStatus.toUpperCase()}?`)) {
                 try {
-                    await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
-                        method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ status: newStatus })
-                    });
+                    await updateDoc(doc(db, "orders", orderId), { status: newStatus });
                     loadAdminOrders();
                     showToast("Order Status Updated");
                 } catch(e) {
@@ -745,12 +735,9 @@ export default function Admin() {
             btn.disabled = true;
 
             try {
-                await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
-                    method: "PUT",
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ trackingId: trackingId, courierName: courierName })
-                });
+                await updateDoc(doc(db, "orders", orderId), { trackingId: trackingId, courierName: courierName });
                 showToast("Tracking Info Saved Successfully!");
+                loadAdminOrders();
             } catch(e) {
                 alert("Error saving tracking info: " + e.message);
             } finally {
@@ -794,7 +781,6 @@ export default function Admin() {
                 return;
             }
 
-            // 🚀 SPEED FIX: Build HTML in memory first
             let htmlString = '';
 
             ordersToRender.forEach(order => {
@@ -980,7 +966,7 @@ export default function Admin() {
                     </div>`;
             });
 
-            ordersList.innerHTML = htmlString; // Inject once
+            ordersList.innerHTML = htmlString; 
         }
 
         window.handleOrderSearch = function(searchTerm) {
@@ -1015,13 +1001,15 @@ export default function Admin() {
             renderOrdersList(filteredOrders);
         };
 
+        // 🚀 SERVERLESS CUSTOMER LOAD
         async function loadCustomerDetails() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/customers`);
-                if (!response.ok) throw new Error("Failed to load customers.");
-                
-                const data = await response.json();
-                globalCustomers = data;
+                const querySnapshot = await getDocs(collection(db, "users"));
+                globalCustomers = [];
+                querySnapshot.forEach(docSnap => {
+                    globalCustomers.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
                 globalCustomers.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
                 renderCustomerList(globalCustomers);
             } catch (error) {
@@ -1039,7 +1027,6 @@ export default function Admin() {
                 return;
             }
 
-            // 🚀 SPEED FIX: Build HTML in memory first
             let htmlString = '';
 
             customersToRender.forEach(user => {
@@ -1080,7 +1067,7 @@ export default function Admin() {
                     </div>`;
             });
             
-            customerList.innerHTML = htmlString; // Inject once
+            customerList.innerHTML = htmlString; 
         }
 
         window.handleCustomerSearch = function(searchTerm) {
