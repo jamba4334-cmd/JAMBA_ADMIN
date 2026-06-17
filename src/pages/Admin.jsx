@@ -1,6 +1,6 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, query, where } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -26,26 +26,39 @@ const storage = getStorage(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
+// 🚀 GLOBAL VARIABLES (Safe from React re-renders)
+let globalLiveProducts = [];
+let globalOrders = [];
+let globalCustomers = [];
+let globalSellers = []; // Stores seller profiles for the modal
+let editingProductId = null;
+let currentEditImageUrls = [];
+let selectedFiles = [];        
+let activeWomenVideoUrl = "";
+let activeMenVideoUrl = "";
+
 export default function Admin() {
+    // 🚀 NEW: React State for Navigation and CRM Modal
+    const [activeTab, setActiveTab] = useState("live-products");
+    const [selectedSeller, setSelectedSeller] = useState(null);
+    const [sellerModalTab, setSellerModalTab] = useState("profile");
+    const [sellerPayouts, setSellerPayouts] = useState([]);
+
     useEffect(() => {
+        // Safe React Navigation
+        window.showSection = function(sectionId) {
+            setActiveTab(sectionId);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
 
-        function showSection(sectionId, clickedElement) {
-            document.querySelectorAll('.content-section').forEach(section => section.classList.remove('active'));
-            document.getElementById(sectionId).classList.add('active');
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            if(clickedElement) clickedElement.classList.add('active');
-        }
-
-        window.showSection = showSection;
-
-        function showToast(message) {
+        window.showToast = function(message) {
             const toast = document.getElementById('toast-notification');
             if(toast) {
                 toast.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${message}`;
                 toast.classList.add('show');
                 setTimeout(() => { toast.classList.remove('show'); }, 3000);
             }
-        }
+        };
 
         window.updateCategoryOptions = function(gender, selectedCategory = "") {
             const categorySelect = document.getElementById('p-category');
@@ -108,24 +121,14 @@ export default function Admin() {
          
         async function bootstrapData() {
             loadSiteSettings();
-            loadCustomerDetails();
-            loadAuthorizedSellers(); 
-            
+             loadCustomerDetails();
             await loadAdminInventory(); 
             loadAdminOrders(); 
+            window.loadAuthorizedSellers(); 
         }
 
-        let globalLiveProducts = [];
-        let globalOrders = [];
-        let globalCustomers = [];
-        
-        let editingProductId = null;
-        let currentEditImageUrls = [];
-        let selectedFiles = [];        
-        let activeWomenVideoUrl = "";
-        let activeMenVideoUrl = "";
-
-         async function loadAuthorizedSellers() {
+        // 🚀 UPGRADED: Fetches Sellers AND their Store Profiles
+        window.loadAuthorizedSellers = async function() {
             const list = document.getElementById('authorized-sellers-list');
             if(!list) return;
 
@@ -137,31 +140,79 @@ export default function Admin() {
                     return;
                 }
                 
+                globalSellers = [];
                 let htmlString = '';
-                querySnapshot.forEach((docSnap) => {
+                
+                for (const docSnap of querySnapshot.docs) {
                     const email = docSnap.id;
                     const data = docSnap.data();
                     const dateAdded = data.addedAt ? new Date(data.addedAt).toLocaleDateString() : 'Unknown Date';
                     
+                    const profSnap = await getDoc(doc(db, "seller_profiles", email));
+                    const profileData = profSnap.exists() ? profSnap.data() : null;
+                    const brandName = profileData?.brandName || "Profile Not Setup";
+                    const sellerName = profileData?.sellerName || "Unknown Owner";
+                    
+                    globalSellers.push({ email, addedAt: dateAdded, profile: profileData });
+
                     htmlString += `
-                        <div style="display:flex; justify-content: space-between; padding: 14px; border-bottom: 1px solid #f3f4f6; align-items: center; background: #fff;">
-                            <div>
-                                <strong style="color: var(--primary); font-size: 14px;"><i class="fa-solid fa-user-check" style="color: var(--success); margin-right: 6px;"></i> ${email}</strong><br>
-                                <span style="font-size: 11px; color: var(--text-muted); margin-left: 22px;">Authorized on: ${dateAdded}</span>
+                        <div class="card" style="padding: 20px; display:flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <div style="display: flex; gap: 16px; align-items: center;">
+                                <div style="width: 50px; height: 50px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; overflow: hidden;">
+                                    ${profileData?.profilePhoto ? `<img src="${profileData.profilePhoto}" style="width:100%; height:100%; object-fit:cover;" />` : brandName.charAt(0)}
+                                </div>
+                                <div>
+                                    <strong style="color: var(--primary); font-size: 16px;">${brandName}</strong><br>
+                                    <span style="font-size: 13px; color: var(--text-main);"><i class="fa-solid fa-user" style="color: var(--text-muted);"></i> ${sellerName} &nbsp;|&nbsp; <i class="fa-solid fa-envelope" style="color: var(--text-muted);"></i> ${email}</span>
+                                </div>
                             </div>
-                            <button class="action-btn btn-delete" onclick="window.removeAuthorizedSeller('${email}')" style="padding: 6px 12px; font-size: 12px;">
-                                <i class="fa-solid fa-trash"></i> Revoke Access
-                            </button>
+                            <div style="display: flex; gap: 10px;">
+                                <button type="button" class="action-btn btn-status-active" onclick="window.openSellerDetails('${email}')">
+                                    <i class="fa-solid fa-folder-open"></i> Manage Store
+                                </button>
+                                <button type="button" class="action-btn btn-delete" onclick="window.removeAuthorizedSeller('${email}')">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
                     `;
-                });
+                }
                 
                 list.innerHTML = htmlString;
             } catch (e) {
-                console.error("Error loading VIP sellers", e);
+                console.error("Error loading sellers", e);
                 list.innerHTML = `<p style="color: var(--danger); font-size: 13px;">Error loading sellers. Check your Firebase Rules.</p>`;
             }
-        }
+        };
+
+        // 🚀 NEW: Opens the Seller Modal
+        window.openSellerDetails = async function(email) {
+            const seller = globalSellers.find(s => s.email === email);
+            if(!seller) return;
+            
+            const myProducts = globalLiveProducts.filter(p => p.sellerEmail === seller.email || p.brandName === seller.profile?.brandName);
+            const myOrders = globalOrders.filter(o => {
+                if(!o.items) return false;
+                return o.items.some(item => item.sellerEmail === seller.email || item.brandName === seller.profile?.brandName);
+            });
+
+            const payoutSnap = await getDocs(query(collection(db, "payout_requests"), where("email", "==", seller.email)));
+            let payouts = [];
+            payoutSnap.forEach(d => payouts.push({id: d.id, ...d.data()}));
+
+            seller.products = myProducts;
+            seller.orders = myOrders;
+            setSellerPayouts(payouts);
+            setSelectedSeller(seller);
+            setSellerModalTab("profile");
+            
+            document.body.style.overflow = "hidden";
+        };
+
+        window.closeSellerModal = function() {
+            setSelectedSeller(null);
+            document.body.style.overflow = "auto";
+        };
 
         window.addAuthorizedSeller = async function(e) {
             e.preventDefault();
@@ -180,9 +231,9 @@ export default function Admin() {
                     addedAt: new Date().toISOString(),
                     addedBy: ALLOWED_ADMIN_EMAIL
                 });
-                showToast(email + " has been authorized!");
+                window.showToast(email + " has been authorized!");
                 emailInput.value = "";
-                loadAuthorizedSellers();
+                window.loadAuthorizedSellers();
             } catch(err) {
                 alert("Error authorizing seller: " + err.message);
             } finally {
@@ -195,8 +246,8 @@ export default function Admin() {
             if(confirm(`Are you absolutely sure you want to revoke access for ${email}?\n\nThey will be locked out of the Seller Portal immediately.`)) {
                 try {
                     await deleteDoc(doc(db, "authorized_sellers", email));
-                    showToast("Access revoked for " + email);
-                    loadAuthorizedSellers();
+                    window.showToast("Access revoked for " + email);
+                    window.loadAuthorizedSellers();
                 } catch(e) {
                     alert("Error removing seller: " + e.message);
                 }
@@ -317,7 +368,7 @@ export default function Admin() {
                     allow_online: document.getElementById('p-pay-online').checked,
                     isHidden: false,
                     isOutOfStock: false,
-                    approval_status: "approved" // Admin uploads are automatically approved
+                    approval_status: "approved"
                 };
 
                 const method = editingProductId ? "PUT" : "POST";
@@ -331,7 +382,7 @@ export default function Admin() {
 
                 if (!response.ok) throw new Error("Failed to save product on server.");
 
-                showToast(editingProductId ? "Product Updated Successfully!" : "New Product Added Successfully!");
+                window.showToast(editingProductId ? "Product Updated Successfully!" : "New Product Added Successfully!");
 
                 document.getElementById('new-product-form').reset();
                 document.getElementById('p-pay-cod').checked = true; 
@@ -342,7 +393,7 @@ export default function Admin() {
                 selectedFiles = [];
                 window.renderImagePreview();
 
-                showSection('live-products', document.querySelectorAll('.nav-item')[0]);
+                window.showSection('live-products');
                 loadAdminInventory();
             } catch (err) { 
                 alert("Error saving product: " + err.message); 
@@ -364,10 +415,9 @@ export default function Admin() {
 
             document.getElementById('submit-btn').innerText = "Save Product to Database";
             document.getElementById('cancel-edit-btn').style.display = "none";
-            showSection('live-products', document.querySelectorAll('.nav-item')[0]);
+            window.showSection('live-products');
         };
 
-        // 🚀 NEW: PRODUCT APPROVAL WORKFLOW
         window.approveProduct = async function(productId) {
             if(confirm("Approve this product and make it live on the store?")) {
                 try {
@@ -376,7 +426,7 @@ export default function Admin() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ approval_status: 'approved', isHidden: false })
                     });
-                    showToast("Product Approved & Published!");
+                    window.showToast("Product Approved & Published!");
                     loadAdminInventory();
                 } catch (e) {
                     alert("Error approving product: " + e.message);
@@ -392,7 +442,7 @@ export default function Admin() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ approval_status: 'rejected', isHidden: true })
                     });
-                    showToast("Product Rejected.");
+                    window.showToast("Product Rejected.");
                     loadAdminInventory();
                 } catch (e) {
                     alert("Error rejecting product: " + e.message);
@@ -425,8 +475,14 @@ export default function Admin() {
             }
         };
 
-        window.editProduct = function(encodedProduct) {
-            const product = JSON.parse(decodeURIComponent(encodedProduct));
+        // 🚀 FIXED: ID LOOKUP INSTEAD OF HTML STRING INJECTION
+        window.editProduct = function(productId) {
+            const product = globalLiveProducts.find(p => p.docId === productId);
+            if (!product) {
+                alert("Error: Product data not found.");
+                return;
+            }
+
             editingProductId = product.docId;
 
             document.getElementById('p-name').value = product.title || "";
@@ -464,7 +520,7 @@ export default function Admin() {
 
             document.getElementById('submit-btn').innerText = "Save Product Updates";
             document.getElementById('cancel-edit-btn').style.display = "block";
-            showSection('add-product', document.querySelectorAll('.nav-item')[1]);
+            window.showSection('add-product');
         };
 
         async function loadSiteSettings() {
@@ -522,7 +578,7 @@ export default function Admin() {
                     last_updated: new Date().toISOString()
                 }, { merge: true }); 
 
-                showToast("Login Image updated successfully!");
+                window.showToast("Login Image updated successfully!");
                 msg.innerText = "";
             } catch (error) {
                 msg.innerText = "❌ Update Error: " + error.message;
@@ -547,7 +603,7 @@ export default function Admin() {
                     last_updated: new Date().toISOString()
                 }, { merge: true }); 
 
-                showToast("Banner text updated successfully!");
+                window.showToast("Banner text updated successfully!");
             } catch (error) {
                 msg.innerText = "❌ Update Error: " + error.message;
                 msg.style.color = "var(--danger)";
@@ -597,7 +653,7 @@ export default function Admin() {
                     last_updated: new Date().toISOString()
                 }, { merge: true });
 
-                showToast("Videos uploaded successfully!");
+                window.showToast("Videos uploaded successfully!");
                 msg.innerText = "";
                 document.getElementById('setting-women-video-file').value = "";
                 document.getElementById('setting-men-video-file').value = "";
@@ -643,10 +699,7 @@ export default function Admin() {
                 if (mainImgUrl.includes('res.cloudinary.com') && mainImgUrl.includes('/upload/')) {
                     mainImgUrl = mainImgUrl.replace('/upload/', '/upload/w_150,c_fill,q_auto/');
                 }
-
-                const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
                 
-                // 🚀 NEW: Setup Badges based on Approval Status
                 const placementText = product.placement === 'hero' ? '<span class="hero-badge"><i class="fa-solid fa-star"></i> Hero</span>' : '';
                 const isHidden = product.isHidden || false;
                 const isOOS = product.isOutOfStock || false;
@@ -663,14 +716,13 @@ export default function Admin() {
                 const hiddenBadge = isHidden ? '<span class="hero-badge" style="background-color: #9CA3AF;"><i class="fa-solid fa-eye-slash"></i> Hidden</span>' : '';
                 const oosBadge = isOOS ? '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-ban"></i> Out Of Stock</span>' : '';
                 
-                // 🚀 NEW: Dynamic action buttons based on status
                 let actionButtonsHtml = '';
                 if (product.approval_status === 'pending') {
                     actionButtonsHtml = `
-                        <button class="action-btn" style="background: var(--success); color: white;" onclick="window.approveProduct('${product.docId}')"><i class="fa-solid fa-check"></i> Approve & Publish</button>
-                        <button class="action-btn" style="background: var(--danger); color: white;" onclick="window.rejectProduct('${product.docId}')"><i class="fa-solid fa-xmark"></i> Reject</button>
+                        <button type="button" class="action-btn" style="background: var(--success); color: white;" onclick="window.approveProduct('${product.docId}')"><i class="fa-solid fa-check"></i> Approve & Publish</button>
+                        <button type="button" class="action-btn" style="background: var(--danger); color: white;" onclick="window.rejectProduct('${product.docId}')"><i class="fa-solid fa-xmark"></i> Reject</button>
                         <div style="flex-grow: 1;"></div>
-                        <button class="action-btn btn-edit" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Review Details</button>
+                        <button type="button" class="action-btn btn-edit" onclick="window.editProduct('${product.docId}')"><i class="fa-solid fa-pen"></i> Review Details</button>
                     `;
                 } else {
                     const hideBtnText = isHidden ? '<i class="fa-solid fa-eye-slash"></i> Hidden' : '<i class="fa-solid fa-eye"></i> Visible';
@@ -679,12 +731,12 @@ export default function Admin() {
                     const stockBtnClass = isOOS ? 'btn-status-inactive' : 'btn-status-active';
 
                     actionButtonsHtml = `
-                        <button class="action-btn btn-edit" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
+                        <button type="button" class="action-btn btn-edit" onclick="window.editProduct('${product.docId}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
                         <div style="width: 1px; height: 16px; background: #e5e7eb; margin: 0 4px;"></div>
-                        <button class="action-btn ${hideBtnClass}" onclick="window.toggleProductHide('${product.docId}', ${!isHidden})">${hideBtnText}</button>
-                        <button class="action-btn ${stockBtnClass}" onclick="window.toggleProductStock('${product.docId}', ${!isOOS})">${stockBtnText}</button>
+                        <button type="button" class="action-btn ${hideBtnClass}" onclick="window.toggleProductHide('${product.docId}', ${!isHidden})">${hideBtnText}</button>
+                        <button type="button" class="action-btn ${stockBtnClass}" onclick="window.toggleProductStock('${product.docId}', ${!isOOS})">${stockBtnText}</button>
                         <div style="flex-grow: 1;"></div>
-                        <button class="action-btn btn-delete" onclick="window.deleteProduct('${product.docId}')"><i class="fa-solid fa-trash"></i></button>
+                        <button type="button" class="action-btn btn-delete" onclick="window.deleteProduct('${product.docId}')"><i class="fa-solid fa-trash"></i></button>
                     `;
                 }
 
@@ -713,7 +765,7 @@ export default function Admin() {
                         </div>
                         <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 4px;">${product.title}</div>
                         <div style="font-size: 14px; color: var(--text-main); margin-bottom: 16px;">
-                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${displayCategory}
+                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${displayCategory} &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; Stock: <strong>${product.stock || 0}</strong>
                         </div>
                         <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding-top: 16px; border-top: 1px solid #f3f4f6;">
                             ${actionButtonsHtml}
@@ -781,7 +833,7 @@ export default function Admin() {
                         body: JSON.stringify({ status: newStatus })
                     });
                     loadAdminOrders();
-                    showToast("Order Status Updated");
+                    window.showToast("Order Status Updated");
                 } catch(e) {
                     alert("Error updating order: " + e.message);
                 }
@@ -807,7 +859,7 @@ export default function Admin() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ trackingId: trackingId, courierName: courierName })
                 });
-                showToast("Tracking Info Saved Successfully!");
+                window.showToast("Tracking Info Saved Successfully!");
                 loadAdminOrders();
             } catch(e) {
                 alert("Error saving tracking info: " + e.message);
@@ -837,7 +889,7 @@ export default function Admin() {
         window.copyAddress = function(name, phone, add1, landmark, district, state, pin) {
             const formattedAddress = `${name}\nPhone: ${phone}\n${add1}\n${landmark ? landmark + '\n' : ''}${district}, ${state} - ${pin}`;
             navigator.clipboard.writeText(formattedAddress).then(() => {
-                showToast("Shipping address copied!");
+                window.showToast("Shipping address copied!");
             }).catch(err => {
                 console.error("Failed to copy text: ", err);
             });
@@ -886,7 +938,7 @@ export default function Admin() {
                             ${order.shippingAddress.address1}${order.shippingAddress.landmark ? `, ${order.shippingAddress.landmark}` : ''}<br>
                             ${order.shippingAddress.district}, ${order.shippingAddress.state} - <strong style="color: var(--primary);">${order.shippingAddress.pincode}</strong>
                         </div>
-                        <button class="action-btn" style="margin-top: 12px; background: white; border: 1px solid #d1d5db; padding: 4px 8px; font-size:11px;" 
+                        <button type="button" class="action-btn" style="margin-top: 12px; background: white; border: 1px solid #d1d5db; padding: 4px 8px; font-size:11px;" 
                                 onclick="window.copyAddress('${safeName}', '${customerPhone}', '${safeAdd}', '${safeLand}', '${order.shippingAddress.district}', '${order.shippingAddress.state}', '${order.shippingAddress.pincode}')">
                             <i class="fa-regular fa-copy"></i> Copy Address
                         </button>
@@ -911,6 +963,7 @@ export default function Admin() {
                 }
 
                 const locationStr = city ? `${city}, ${state} - ${pincode}` : '';
+                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Seller Preparing Item</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Waiting for Seller</span>';
 
                 const blackBoxHtml = `
                     <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
@@ -922,7 +975,7 @@ export default function Admin() {
                         <a href="tel:${sellerPhone}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-phone"></i> ${sellerPhone}</a>
                     </div>
                     <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; color: var(--text-muted); line-height: 1.4;">
-                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span><br>
+                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span> ${isSellerAccepted}<br>
                         ${pickupAddress}<br>
                         ${locationStr}
                     </div>
@@ -951,17 +1004,17 @@ export default function Admin() {
                 if (currentStatus === 'pending' || currentStatus === 'created') {
                     adminActions = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px;">
-                            <button class="action-btn btn-status-active" onclick="window.updateOrderStatus('${order.id}', 'paid')">
+                            <button type="button" class="action-btn btn-status-active" onclick="window.updateOrderStatus('${order.id}', 'paid')">
                                 <i class="fa-solid fa-check-double"></i> Verify Payment
                             </button>
-                            <button class="action-btn btn-delete" onclick="window.updateOrderStatus('${order.id}', 'cancelled')">
+                            <button type="button" class="action-btn btn-delete" onclick="window.updateOrderStatus('${order.id}', 'cancelled')">
                                 <i class="fa-solid fa-xmark"></i> Reject
                             </button>
                         </div>`;
                 } else if (currentStatus === 'paid') {
                     adminActions = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
-                            <button class="action-btn btn-edit" style="width: 100%;" onclick="window.updateOrderStatus('${order.id}', 'shipped')">
+                            <button type="button" class="action-btn btn-edit" style="width: 100%;" onclick="window.updateOrderStatus('${order.id}', 'shipped')">
                                 <i class="fa-solid fa-truck-fast"></i> Mark as Shipped
                             </button>
                         </div>`;
@@ -980,7 +1033,7 @@ export default function Admin() {
                     <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                         <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name (e.g. Delhivery)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
                         <input type="text" id="tracking-id-${order.id}" value="${existingTracking}" placeholder="Tracking ID (e.g. 123456789)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
-                        <button id="track-btn-${order.id}" class="action-btn" onclick="window.updateTrackingInfo('${order.id}')" style="padding: 9px 16px; background: var(--primary); color: white; border: none; font-weight: 600;">
+                        <button type="button" id="track-btn-${order.id}" class="action-btn" onclick="window.updateTrackingInfo('${order.id}')" style="padding: 9px 16px; background: var(--primary); color: white; border: none; font-weight: 600;">
                             Save Tracking
                         </button>
                     </div>
@@ -1157,6 +1210,57 @@ export default function Admin() {
 
     }, []);
 
+    // 🚀 NEW: Admin Saving the Seller's Profile directly from Modal
+    const handleAdminSaveSellerProfile = async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('admin-save-prof-btn');
+        btn.disabled = true;
+        btn.innerText = 'Saving...';
+
+        try {
+            const updatedProfile = {
+                ...selectedSeller.profile,
+                brandName: document.getElementById('admin-edit-brand').value,
+                sellerName: document.getElementById('admin-edit-name').value,
+                primaryPhone: document.getElementById('admin-edit-phone').value,
+                storeEmail: document.getElementById('admin-edit-email').value,
+                accName: document.getElementById('admin-edit-accname').value,
+                accNumber: document.getElementById('admin-edit-accnum').value,
+                ifsc: document.getElementById('admin-edit-ifsc').value,
+            };
+
+            await setDoc(doc(db, "seller_profiles", selectedSeller.email), updatedProfile, { merge: true });
+            
+            setSelectedSeller(prev => ({...prev, profile: updatedProfile}));
+            window.showToast("Seller Profile Updated Successfully!");
+            window.loadAuthorizedSellers(); 
+        } catch (err) {
+            alert("Error updating profile: " + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Save Changes';
+        }
+    };
+
+    // 🚀 NEW: Admin Processing Payouts
+    const handleMarkPayoutPaid = async (payoutId) => {
+        const utr = prompt("Enter Bank Transfer UTR/Reference Number:");
+        if(!utr) return;
+
+        try {
+            await updateDoc(doc(db, "payout_requests", payoutId), {
+                status: 'paid',
+                utr: utr,
+                paid_at: new Date().toISOString()
+            });
+            
+            setSellerPayouts(prev => prev.map(p => p.id === payoutId ? { ...p, status: 'paid', utr: utr } : p));
+            window.showToast("Payout Marked as Paid!");
+        } catch(e) {
+            alert("Error updating payout: " + e.message);
+        }
+    };
+
     return (
         <div className="admin-isolated-wrapper">
             <div id="toast-notification" className="toast-notification"></div>
@@ -1167,7 +1271,7 @@ export default function Admin() {
                     <p>Please log in with your authorized Google account.</p>
                     <div className="login-error" id="login-error" style={{ display: 'none', marginBottom: '15px' }}>Unauthorized email address.</div>
                     
-                    <button className="btn-submit" onClick={() => window.handleAdminLogin()} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                    <button type="button" className="btn-submit" onClick={() => window.handleAdminLogin()} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
                         <i className="fa-brands fa-google"></i> Sign In With Google
                     </button>
                 </div>
@@ -1178,39 +1282,39 @@ export default function Admin() {
                     <span className="logo-text"><span className="logo-jamba">JAMBA</span>WEAR</span>
                 </div>
                 <ul className="nav-menu">
-                    <li className="nav-item active" onClick={(event) => window.showSection('live-products', event.currentTarget)}><i className="fa-solid fa-layer-group"></i> Inventory</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('add-product', event.currentTarget)}><i className="fa-solid fa-plus"></i> Add Product</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('orders', event.currentTarget)}><i className="fa-solid fa-truck"></i> Orders</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('seller-access', event.currentTarget)}><i className="fa-solid fa-user-shield"></i> Seller Access</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('site-settings', event.currentTarget)}><i className="fa-solid fa-sliders"></i> Site Settings</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('customer-details', event.currentTarget)}><i className="fa-solid fa-user-group"></i> Customers</li>
+                    <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> Inventory</li>
+                    <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
+                    <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
+                    <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}><i className="fa-solid fa-store"></i> Seller Directory</li>
+                    <li className={`nav-item ${activeTab === 'site-settings' ? 'active' : ''}`} onClick={() => window.showSection('site-settings')}><i className="fa-solid fa-sliders"></i> Site Settings</li>
+                    <li className={`nav-item ${activeTab === 'customer-details' ? 'active' : ''}`} onClick={() => window.showSection('customer-details')}><i className="fa-solid fa-user-group"></i> Customers</li>
                 </ul>
             </nav>
 
             <div className="main-pannel">
                 <div className="header">
                     <h1>Dashboard</h1>
-                    <button className="btn-login" onClick={() => window.handleLogout()}>Logout Admin</button>
+                    <button type="button" className="btn-login" onClick={() => window.handleLogout()}>Logout Admin</button>
                 </div>
 
-                <div id="live-products" className="content-section active">
+                <div id="live-products" className={`content-section ${activeTab === 'live-products' ? 'active' : ''}`}>
                     <div style={{ marginBottom: '24px', borderBottom: '1px solid var(--input-border)', paddingBottom: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span className="section-title">Current Inventory</span>
                             <div className="filter-group">
-                                <button className="filter-btn active" onClick={(event) => window.filterInventory('all', event.currentTarget)}>All</button>
-                                <button className="filter-btn" onClick={(event) => window.filterInventory('pending', event.currentTarget)} style={{color: 'var(--accent)'}}>⚠️ Needs Approval</button>
-                                <button className="filter-btn" onClick={(event) => window.filterInventory('hero', event.currentTarget)}>Homepage Hero</button>
-                                <button className="filter-btn" onClick={(event) => window.filterInventory('regular', event.currentTarget)}>Regular Collection</button>
+                                <button type="button" className="filter-btn active" onClick={(event) => window.filterInventory('all', event.currentTarget)}>All</button>
+                                <button type="button" className="filter-btn" onClick={(event) => window.filterInventory('pending', event.currentTarget)} style={{color: 'var(--accent)'}}>⚠️ Needs Approval</button>
+                                <button type="button" className="filter-btn" onClick={(event) => window.filterInventory('hero', event.currentTarget)}>Homepage Hero</button>
+                                <button type="button" className="filter-btn" onClick={(event) => window.filterInventory('regular', event.currentTarget)}>Regular Collection</button>
                             </div>
                         </div>
 
                         <div id="regular-sub-filters" style={{ display: 'none', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed #e5e7eb' }}>
                             <span className="label" style={{ alignSelf: 'center', marginRight: '8px' }}>Filter Regular:</span>
-                            <button className="filter-btn active" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('all', event.currentTarget)}>All Categories</button>
-                            <button className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Men', event.currentTarget)}>Men Only</button>
-                            <button className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Women', event.currentTarget)}>Women Only</button>
-                            <button className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Accessories', event.currentTarget)}>Accessories Only</button>
+                            <button type="button" className="filter-btn active" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('all', event.currentTarget)}>All Categories</button>
+                            <button type="button" className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Men', event.currentTarget)}>Men Only</button>
+                            <button type="button" className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Women', event.currentTarget)}>Women Only</button>
+                            <button type="button" className="filter-btn" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={(event) => window.filterByGender('Accessories', event.currentTarget)}>Accessories Only</button>
                         </div>
                     </div>
                     <div id="admin-inventory-list">
@@ -1218,7 +1322,7 @@ export default function Admin() {
                     </div>
                 </div>
 
-                <div id="add-product" className="content-section">
+                <div id="add-product" className={`content-section ${activeTab === 'add-product' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Catalogue Management</span>
                     
                     <form className="card" id="new-product-form" onSubmit={(e) => window.handleProductSubmit(e)}>
@@ -1373,7 +1477,7 @@ export default function Admin() {
                     </form>
                 </div>
 
-                <div id="orders" className="content-section">
+                <div id="orders" className={`content-section ${activeTab === 'orders' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <span className="section-title">Order Processing</span>
                         
@@ -1384,14 +1488,14 @@ export default function Admin() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
-                        <button className="filter-btn active" onClick={(event) => window.filterOrders('all', event.currentTarget)}>All Orders</button>
-                        <button className="filter-btn" onClick={(event) => window.filterOrders('pending', event.currentTarget)}>
+                        <button type="button" className="filter-btn active" onClick={(event) => window.filterOrders('all', event.currentTarget)}>All Orders</button>
+                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('pending', event.currentTarget)}>
                             <i className="fa-solid fa-circle-exclamation" style={{ color: 'var(--accent)' }}></i> Needs Verification
                         </button>
-                        <button className="filter-btn" onClick={(event) => window.filterOrders('paid', event.currentTarget)}>
+                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('paid', event.currentTarget)}>
                             <i className="fa-solid fa-box" style={{ color: 'var(--success)' }}></i> Ready to Ship
                         </button>
-                        <button className="filter-btn" onClick={(event) => window.filterOrders('shipped', event.currentTarget)}>
+                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('shipped', event.currentTarget)}>
                             <i className="fa-solid fa-plane" style={{ color: 'var(--primary)' }}></i> Shipped
                         </button>
                     </div>
@@ -1401,30 +1505,28 @@ export default function Admin() {
                     </div>
                 </div>
 
-                <div id="seller-access" className="content-section">
-                    <span className="section-title" style={{ marginBottom: '24px' }}>Authorized Sellers (Whitelist)</span>
-                    <p className="text-helper" style={{ marginBottom: '20px' }}>Only Google Emails added to this list will be allowed to log into the JAMBAWEAR Seller Portal. This prevents unauthorized users from accessing the system.</p>
+                <div id="seller-access" className={`content-section ${activeTab === 'seller-access' ? 'active' : ''}`}>
+                    <span className="section-title" style={{ marginBottom: '24px' }}>Seller Directory</span>
+                    <p className="text-helper" style={{ marginBottom: '20px' }}>Only Google Emails added to this list will be allowed to log into the JAMBAWEAR Seller Portal.</p>
 
                     <form className="card" style={{ marginBottom: '24px' }} onSubmit={(e) => window.addAuthorizedSeller(e)}>
-                        <span className="section-subtitle">Authorize New Seller</span>
+                        <span className="section-subtitle">Authorize New Partner</span>
                         <div className="field-grid" style={{ alignItems: 'end' }}>
                             <div className="form-group" style={{ margin: 0, flex: 1 }}>
-                                <span className="label">Seller's Google Email</span>
+                                <span className="label">Partner's Google Email</span>
                                 <input type="email" id="new-seller-email" className="input-box" placeholder="e.g. bodo.weavers@gmail.com" required />
                             </div>
-                            <button type="submit" id="add-seller-btn" className="btn-submit" style={{ width: 'auto', padding: '10px 24px', margin: 0 }}>Authorize Seller</button>
+                            <button type="submit" id="add-seller-btn" className="btn-submit" style={{ width: 'auto', padding: '10px 24px', margin: 0 }}>Authorize Partner</button>
                         </div>
                     </form>
 
-                    <div className="card">
-                        <span className="section-subtitle">Currently Authorized Sellers</span>
-                        <div id="authorized-sellers-list" style={{ marginTop: '16px' }}>
-                            <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading authorized sellers...</p>
-                        </div>
+                    <span className="section-subtitle">Currently Authorized Sellers</span>
+                    <div id="authorized-sellers-list" style={{ marginTop: '16px' }}>
+                        <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading authorized sellers...</p>
                     </div>
                 </div>
 
-                <div id="site-settings" className="content-section">
+                <div id="site-settings" className={`content-section ${activeTab === 'site-settings' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Storefront Management (CMS)</span>
                     
                     <div className="card" style={{ marginBottom: '24px' }}>
@@ -1490,7 +1592,7 @@ export default function Admin() {
                     </div>
                 </div>
 
-                <div id="customer-details" className="content-section">
+                <div id="customer-details" className={`content-section ${activeTab === 'customer-details' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <span className="section-title">Customer Relationship</span>
                         
@@ -1505,6 +1607,135 @@ export default function Admin() {
                     </div>
                 </div>
             </div>
+
+            {/* 🚀 NEW: THE SELLER CRM MODAL (React State Driven) */}
+            {selectedSeller && (
+                <div className="admin-modal-overlay">
+                    <div className="admin-modal-content">
+                        
+                        <div className="admin-modal-header">
+                            <h2>
+                                {selectedSeller.profile?.profilePhoto ? <img src={selectedSeller.profile?.profilePhoto} style={{width: 40, height: 40, borderRadius: '50%', objectFit: 'cover'}} /> : null}
+                                {selectedSeller.profile?.brandName || selectedSeller.email}
+                            </h2>
+                            <button type="button" className="btn-close-modal" onClick={() => window.closeSellerModal()}>Close Panel</button>
+                        </div>
+
+                        <div className="admin-modal-tabs">
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'profile' ? 'active' : ''}`} onClick={() => setSellerModalTab('profile')}>Store Profile</button>
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'catalog' ? 'active' : ''}`} onClick={() => setSellerModalTab('catalog')}>Catalog & Stock ({selectedSeller.products.length})</button>
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'orders' ? 'active' : ''}`} onClick={() => setSellerModalTab('orders')}>Fulfillment ({selectedSeller.orders.length})</button>
+                            <button type="button" className={`admin-modal-tab ${sellerModalTab === 'finance' ? 'active' : ''}`} onClick={() => setSellerModalTab('finance')}>Financials & Payouts</button>
+                        </div>
+
+                        <div className="admin-modal-body">
+                            
+                            {/* TAB 1: EDIT PROFILE */}
+                            {sellerModalTab === 'profile' && (
+                                <form onSubmit={handleAdminSaveSellerProfile}>
+                                    <div className="field-grid">
+                                        <div className="form-group"><span className="label">Brand Name</span><input type="text" id="admin-edit-brand" defaultValue={selectedSeller.profile?.brandName} className="input-box" required /></div>
+                                        <div className="form-group"><span className="label">Owner Name</span><input type="text" id="admin-edit-name" defaultValue={selectedSeller.profile?.sellerName} className="input-box" required /></div>
+                                    </div>
+                                    <div className="field-grid">
+                                        <div className="form-group"><span className="label">Contact Email</span><input type="email" id="admin-edit-email" defaultValue={selectedSeller.profile?.storeEmail || selectedSeller.email} className="input-box" required /></div>
+                                        <div className="form-group"><span className="label">Contact Phone</span><input type="text" id="admin-edit-phone" defaultValue={selectedSeller.profile?.primaryPhone} className="input-box" required /></div>
+                                    </div>
+                                    
+                                    <span className="section-subtitle" style={{marginTop: '20px'}}>Bank Details</span>
+                                    <div className="field-grid">
+                                        <div className="form-group"><span className="label">Account Name</span><input type="text" id="admin-edit-accname" defaultValue={selectedSeller.profile?.accName} className="input-box" required /></div>
+                                        <div className="form-group"><span className="label">Account Number</span><input type="text" id="admin-edit-accnum" defaultValue={selectedSeller.profile?.accNumber} className="input-box" required /></div>
+                                        <div className="form-group"><span className="label">IFSC Code</span><input type="text" id="admin-edit-ifsc" defaultValue={selectedSeller.profile?.ifsc} className="input-box" required /></div>
+                                    </div>
+
+                                    <button type="submit" id="admin-save-prof-btn" className="btn-submit" style={{width: 'auto', padding: '10px 24px'}}>Save Changes</button>
+                                </form>
+                            )}
+
+                            {/* TAB 2: CATALOG */}
+                            {sellerModalTab === 'catalog' && (
+                                <div>
+                                    {selectedSeller.products.length === 0 ? <p style={{color: 'var(--text-muted)'}}>No products uploaded by this seller.</p> : null}
+                                    {selectedSeller.products.map(p => (
+                                        <div key={p.docId || p.id} style={{ display: 'flex', gap: '16px', padding: '16px', borderBottom: '1px solid #eee' }}>
+                                            <img src={p.images?.[0] || 'https://via.placeholder.com/80'} style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: '6px' }} />
+                                            <div>
+                                                <strong style={{fontSize: '15px', color: 'var(--primary)'}}>{p.title}</strong>
+                                                <div style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px'}}>
+                                                    Price: ₹{p.selling_price} | Stock: <strong>{p.stock || 0}</strong> | Status: {p.approval_status === 'pending' ? '⚠️ Pending' : '✅ Live'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* TAB 3: FULFILLMENT */}
+                            {sellerModalTab === 'orders' && (
+                                <div>
+                                    {selectedSeller.orders.length === 0 ? <p style={{color: 'var(--text-muted)'}}>No orders to fulfill yet.</p> : null}
+                                    {selectedSeller.orders.map(o => (
+                                        <div key={o.id} style={{ padding: '16px', borderBottom: '1px solid #eee' }}>
+                                            <strong style={{color: 'var(--primary)'}}>Order Ref: {o.id}</strong>
+                                            <div style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px'}}>
+                                                Status: <span style={{textTransform: 'uppercase', color: 'var(--primary)'}}>{o.status || 'Pending'}</span> | 
+                                                Seller Accepted: {o.seller_accepted ? '✅ Yes' : '⏳ Waiting'}
+                                            </div>
+                                            {o.trackingId && <div style={{fontSize: '12px', marginTop: '6px', background: '#f9fafb', padding: '8px'}}>Tracking: {o.trackingId} ({o.courierName})</div>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* TAB 4: FINANCIALS */}
+                            {sellerModalTab === 'finance' && (
+                                <div>
+                                    <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
+                                        <div style={{flex: 1, background: '#fef3c7', padding: '16px', borderRadius: '8px', color: '#b45309'}}>
+                                            <div style={{fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase'}}>Pending Payout Requests</div>
+                                            <div style={{fontSize: '24px', fontWeight: 'bold'}}>{sellerPayouts.filter(p => p.status === 'pending').length}</div>
+                                        </div>
+                                        <div style={{flex: 1, background: '#ecfdf5', padding: '16px', borderRadius: '8px', color: '#065f46'}}>
+                                            <div style={{fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase'}}>Total Paid Payouts</div>
+                                            <div style={{fontSize: '24px', fontWeight: 'bold'}}>{sellerPayouts.filter(p => p.status === 'paid').length}</div>
+                                        </div>
+                                    </div>
+
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '1px solid #e5e7eb', color: 'var(--text-muted)' }}>
+                                                <th style={{ padding: '12px 8px' }}>Date</th>
+                                                <th style={{ padding: '12px 8px' }}>Amount</th>
+                                                <th style={{ padding: '12px 8px' }}>Status</th>
+                                                <th style={{ padding: '12px 8px' }}>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sellerPayouts.map(p => (
+                                                <tr key={p.id} style={{ borderBottom: '1px solid #f9fafb' }}>
+                                                    <td style={{ padding: '12px 8px' }}>{new Date(p.date).toLocaleDateString()}</td>
+                                                    <td style={{ padding: '12px 8px', fontWeight: 'bold', color: 'var(--primary)' }}>₹{p.amount}</td>
+                                                    <td style={{ padding: '12px 8px' }}>
+                                                        {p.status === 'paid' ? <span style={{color: 'var(--success)'}}>Paid ({p.utr})</span> : <span style={{color: 'var(--accent)'}}>Pending</span>}
+                                                    </td>
+                                                    <td style={{ padding: '12px 8px' }}>
+                                                        {p.status === 'pending' && (
+                                                            <button type="button" onClick={() => handleMarkPayoutPaid(p.id)} style={{background: 'var(--primary)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer'}}>Mark Paid</button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {sellerPayouts.length === 0 && <tr><td colSpan="4" style={{padding: '16px 8px', color: 'var(--text-muted)'}}>No payout requests found.</td></tr>}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
