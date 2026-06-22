@@ -46,6 +46,71 @@ export default function Admin() {
     // Global state for pending payout notifications
     const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
 
+    // Tribe & Category Settings State
+    const [tribes, setTribes] = useState([]);
+
+    // --- Tribe Handlers ---
+    const handleAddTribe = () => {
+        setTribes([...tribes, { id: Date.now(), name: '', categories: ['', '', '', ''] }]);
+    };
+
+    const handleAddCategory = (tribeId) => {
+        setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, ''] } : t));
+    };
+
+    const handleCategoryChange = (tribeId, index, value) => {
+        setTribes(tribes.map(t => {
+            if (t.id === tribeId) {
+                const newCats = [...t.categories];
+                newCats[index] = value;
+                return { ...t, categories: newCats };
+            }
+            return t;
+        }));
+    };
+
+    const handleTribeNameChange = (tribeId, value) => {
+        setTribes(tribes.map(t => t.id === tribeId ? { ...t, name: value } : t));
+    };
+
+    const handleRemoveTribe = (tribeId) => {
+        if(window.confirm("Are you sure you want to delete this entire Tribe and all its categories?")) {
+            setTribes(tribes.filter(t => t.id !== tribeId));
+        }
+    };
+
+    const handleRemoveCategory = (tribeId, catIndex) => {
+        setTribes(tribes.map(t => {
+            if (t.id === tribeId) {
+                return { ...t, categories: t.categories.filter((_, i) => i !== catIndex) };
+            }
+            return t;
+        }));
+    };
+
+    const handleSaveTribes = async () => {
+        const btn = document.getElementById('save-tribes-btn');
+        btn.disabled = true;
+        btn.innerText = "Saving...";
+
+        // Clean up empty data before saving to DB
+        const cleanedTribes = tribes.map(t => ({
+            ...t,
+            categories: t.categories.filter(c => c.trim() !== '') 
+        })).filter(t => t.name.trim() !== '' || t.categories.length > 0);
+
+        try {
+            await setDoc(doc(db, "settings", "tribe_categories"), { tribes: cleanedTribes }, { merge: true });
+            setTribes(cleanedTribes); // Update UI with cleaned data
+            window.showToast("Tribe Settings Saved to Database!");
+        } catch (error) {
+            alert("Error saving tribes: " + error.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = "Save Changes";
+        }
+    };
+
     useEffect(() => {
 
         window.showSection = function(sectionId) {
@@ -128,7 +193,23 @@ export default function Admin() {
             loadAdminOrders(); 
             window.loadAuthorizedSellers(); 
             window.loadGlobalPayouts(); 
+            window.loadTribes();
         }
+
+        window.loadTribes = async function() {
+            try {
+                const docSnap = await getDoc(doc(db, "settings", "tribe_categories"));
+                if (docSnap.exists() && docSnap.data().tribes) {
+                    setTribes(docSnap.data().tribes);
+                } else {
+                    setTribes([
+                        { id: 1, name: 'Bodo', categories: ['Dokhona', 'Fasra', 'Blows', 'Jwmgra'] }
+                    ]);
+                }
+            } catch (error) { 
+                console.error("Error loading tribes:", error); 
+            }
+        };
 
         window.loadGlobalPayouts = async function() {
             try {
@@ -202,9 +283,22 @@ export default function Admin() {
             if(!seller) return;
             
             const myProducts = globalLiveProducts.filter(p => p.sellerEmail === seller.email || p.brandName === seller.profile?.brandName);
+            
             const myOrders = globalOrders.filter(o => {
                 if(!o.items) return false;
-                return o.items.some(item => item.sellerEmail === seller.email || item.brandName === seller.profile?.brandName);
+                
+                return o.items.some(orderItem => {
+                    const matchesStamp = (orderItem.sellerEmail && orderItem.sellerEmail === seller.email) || 
+                                         (orderItem.brandName && seller.profile?.brandName && orderItem.brandName === seller.profile?.brandName);
+                                         
+                    const matchesLiveProduct = myProducts.some(myProduct => 
+                        myProduct.docId === orderItem.id || 
+                        myProduct.item_id === orderItem.item_id || 
+                        myProduct.title === orderItem.title
+                    );
+                    
+                    return matchesStamp || matchesLiveProduct;
+                });
             });
 
             const payoutSnap = await getDocs(query(collection(db, "payout_requests"), where("email", "==", seller.email)));
@@ -645,6 +739,7 @@ export default function Admin() {
                 let finalWomenUrl = activeWomenVideoUrl;
                 let finalMenUrl = activeMenVideoUrl;
 
+                // 🚀 Firebase Storage for Heavy Videos
                 if (womenFile) {
                     const womenRef = ref(storage, 'hero_videos/women_hero.mp4');
                     await uploadBytes(womenRef, womenFile);
@@ -879,6 +974,46 @@ export default function Admin() {
             }
         };
 
+        // 🚀 NEW: Securely uploads Shipping Labels directly to Cloudinary (PDFs accepted!)
+        window.handleLabelUpload = async function(orderId, inputElement) {
+            const file = inputElement.files[0];
+            if (!file) return;
+
+            const labelText = document.getElementById(`label-text-${orderId}`);
+            if (labelText) labelText.innerText = "Uploading...";
+
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("upload_preset", "jambawear_preset");
+                
+                // We use /auto/upload so Cloudinary smartly handles PDFs without forcing image conversion
+                const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/auto/upload", { 
+                    method: "POST", 
+                    body: formData 
+                });
+                const data = await res.json();
+                
+                if (!data.secure_url) {
+                    throw new Error(data.error?.message || "Label upload failed.");
+                }
+
+                await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
+                    method: "PUT",
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ shipping_label_url: data.secure_url })
+                });
+
+                window.showToast("Shipping label uploaded via Cloudinary!");
+                loadAdminOrders(); 
+            } catch (err) {
+                alert("Label upload failed: " + err.message);
+            } finally {
+                if (labelText) labelText.innerText = "Upload Label";
+                inputElement.value = ""; 
+            }
+        };
+
         window.filterOrders = function(status, btn) {
             const buttons = btn.parentElement.querySelectorAll('.filter-btn');
             buttons.forEach(b => b.classList.remove('active'));
@@ -1038,11 +1173,27 @@ export default function Admin() {
 
                 const existingCourier = order.courierName || '';
                 const existingTracking = order.trackingId || '';
+                const existingLabel = order.shipping_label_url || order.shippingLabel || '';
+
+                // 🚀 FIXED: Dynamic Label HTML (Upload Button OR View Label Button)
+                const labelHtml = existingLabel 
+                    ? `<div style="display: flex; align-items: center; gap: 8px;">
+                         <a href="${existingLabel}" target="_blank" style="padding: 8px 12px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;"><i class="fa-solid fa-file-invoice"></i> View Label</a>
+                         <label style="cursor: pointer; color: var(--text-muted); font-size: 12px; text-decoration: underline;">
+                            Replace
+                            <input type="file" style="display: none;" onchange="window.handleLabelUpload('${order.id}', this)" />
+                         </label>
+                       </div>`
+                    : `<label class="action-btn" style="background: #f3f4f6; color: var(--text-main); border: 1px solid var(--input-border); cursor: pointer; padding: 8px 12px; font-size: 12px; margin: 0; display: inline-flex; align-items: center; gap: 6px;">
+                         <i class="fa-solid fa-cloud-arrow-up"></i> <span id="label-text-${order.id}">Upload Label</span>
+                         <input type="file" style="display: none;" onchange="window.handleLabelUpload('${order.id}', this)" />
+                       </label>`;
 
                 const trackingHtml = `
                     <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                         <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name (e.g. Delhivery)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
                         <input type="text" id="tracking-id-${order.id}" value="${existingTracking}" placeholder="Tracking ID (e.g. 123456789)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
+                        ${labelHtml}
                         <button type="button" id="track-btn-${order.id}" class="action-btn" onclick="window.updateTrackingInfo('${order.id}')" style="padding: 9px 16px; background: var(--primary); color: white; border: none; font-weight: 600;">
                             Save Tracking
                         </button>
@@ -1103,7 +1254,7 @@ export default function Admin() {
             ordersList.innerHTML = htmlString; 
         }
 
-        window.handleOrderSearch = function(searchTerm) {
+        window.handleCustomerSearch = function(searchTerm) {
             const lowerTerm = searchTerm.toLowerCase();
             
             const activeTabBtn = document.querySelector('#orders .filter-btn.active');
@@ -1264,9 +1415,7 @@ export default function Admin() {
             
             setSellerPayouts(prev => prev.map(p => p.id === payoutId ? { ...p, status: 'paid', utr: utr } : p));
             window.showToast("Payout Marked as Paid!");
-            
-            // Update global badge count after paying out
-            window.loadGlobalPayouts();
+             window.loadGlobalPayouts();
         } catch(e) {
             alert("Error updating payout: " + e.message);
         }
@@ -1295,6 +1444,10 @@ export default function Admin() {
                 <ul className="nav-menu">
                     <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
+                    
+                    {/* NEW TRIBE SETTINGS TAB */}
+                    <li className={`nav-item ${activeTab === 'tribe-settings' ? 'active' : ''}`} onClick={() => window.showSection('tribe-settings')}><i className="fa-solid fa-sitemap"></i> Tribe Settings</li>
+                    
                     <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
                     
                     <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}>
@@ -1492,6 +1645,94 @@ export default function Admin() {
                         <button type="button" id="cancel-edit-btn" className="btn-submit" style={{ background: '#ffffff', color: 'var(--text-main)', border: '1px solid var(--input-border)', display: 'none' }} onClick={() => window.cancelEdit()}>Cancel Edit</button> 
                     </form>
                 </div>
+
+                {/* ========================================= */}
+                {/* NEW SECTION: TRIBE & CATEGORY SETTINGS UI */}
+                {/* ========================================= */}
+                <div id="tribe-settings" className={`content-section ${activeTab === 'tribe-settings' ? 'active' : ''}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <span className="section-title">Collection Manager (Tribe Filters)</span>
+                        <button id="save-tribes-btn" className="btn-submit" style={{ width: 'auto', marginTop: 0, padding: '10px 24px' }} onClick={handleSaveTribes}>
+                            Save Changes
+                        </button>
+                    </div>
+
+                    <div className="card">
+                        {tribes.map((tribe, tIndex) => (
+                            <div key={tribe.id} style={{ marginBottom: '30px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                        <span style={{ fontSize: '18px', fontWeight: '600', marginRight: '12px', color: 'var(--primary)' }}>
+                                            {tIndex + 1}.
+                                        </span>
+                                        <input
+                                            type="text"
+                                            className="input-box"
+                                            style={{ width: '250px', fontSize: '16px', fontWeight: '600', padding: '8px 14px' }}
+                                            value={tribe.name}
+                                            onChange={(e) => handleTribeNameChange(tribe.id, e.target.value)}
+                                            placeholder="Tribe Name (e.g. Bodo)"
+                                        />
+                                    </div>
+                                    <button 
+                                        type="button" 
+                                        className="action-btn btn-delete" 
+                                        style={{ padding: '8px 12px' }} 
+                                        onClick={() => handleRemoveTribe(tribe.id)}
+                                        title="Delete entire Tribe"
+                                    >
+                                        <i className="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', paddingLeft: '28px' }}>
+                                    {tribe.categories.map((cat, cIndex) => (
+                                        <div key={cIndex} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-light)', border: '1px solid var(--input-border)', borderRadius: '6px', overflow: 'hidden' }}>
+                                            <input
+                                                type="text"
+                                                style={{ width: '140px', border: 'none', padding: '8px 12px', outline: 'none', background: 'transparent', fontSize: '14px', color: 'var(--primary)' }}
+                                                value={cat}
+                                                onChange={(e) => handleCategoryChange(tribe.id, cIndex, e.target.value)}
+                                                placeholder="Input"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveCategory(tribe.id, cIndex)}
+                                                style={{ background: 'none', border: 'none', borderLeft: '1px solid var(--input-border)', padding: '8px 10px', color: 'var(--danger)', cursor: 'pointer', transition: 'background 0.2s' }}
+                                                onMouseOver={(e) => e.currentTarget.style.background = '#fee2e2'}
+                                                onMouseOut={(e) => e.currentTarget.style.background = 'none'}
+                                                title="Remove Category"
+                                            >
+                                                <i className="fa-solid fa-xmark"></i>
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        className="action-btn"
+                                        style={{ width: '38px', height: '38px', padding: '0', borderRadius: '6px', background: '#fff', border: '1px dashed #9ca3af' }}
+                                        onClick={() => handleAddCategory(tribe.id)}
+                                        title="Add new category"
+                                    >
+                                        <i className="fa-solid fa-plus" style={{ color: 'var(--text-muted)' }}></i>
+                                    </button>
+                                </div>
+                                <hr style={{ border: '0', borderTop: '1px solid var(--input-border)', margin: '24px 0 0 0' }} />
+                            </div>
+                        ))}
+
+                        <div style={{ textAlign: 'center', marginTop: '20px' }}>
+                            <button 
+                                type="button" 
+                                className="action-btn" 
+                                style={{ background: 'var(--bg-light)', border: '1px solid var(--input-border)', padding: '10px 24px', fontWeight: '600', fontSize: '14px' }} 
+                                onClick={handleAddTribe}
+                            >
+                                + Add New Tribe
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {/* ========================================= */}
 
                 <div id="orders" className={`content-section ${activeTab === 'orders' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
