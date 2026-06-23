@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, query, where } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -26,7 +26,6 @@ const storage = getStorage(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// Global Memory Arrays
 let globalLiveProducts = [];
 let globalOrders = [];
 let globalCustomers = [];
@@ -45,7 +44,6 @@ export default function Admin() {
     const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
     const [tribes, setTribes] = useState([]);
 
-    // --- SECURE AUTHENTICATION HELPER ---
     const getAuthHeaders = async () => {
         const user = auth.currentUser;
         if (!user) return { 'Content-Type': 'application/json' };
@@ -56,7 +54,6 @@ export default function Admin() {
         };
     };
 
-    // --- Tribe Handlers ---
     const handleAddTribe = () => setTribes([...tribes, { id: Date.now(), name: '', categories: ['', '', '', ''] }]);
     const handleAddCategory = (tribeId) => setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, ''] } : t));
     const handleCategoryChange = (tribeId, index, value) => {
@@ -1100,6 +1097,11 @@ export default function Admin() {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-hourglass-half"></i> PENDING</span>';
                 }
 
+                // 🔥 NEW PIPELINE: Prominent Seller Acceptance Badge (next to Order ID)
+                const sellerAcceptedBadge = order.seller_accepted 
+                    ? `<span style="background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; margin-left: 12px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-store"></i> SELLER ACCEPTED</span>`
+                    : `<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; margin-left: 12px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-clock"></i> WAITING FOR SELLER</span>`;
+
                 const customerName = order.shippingAddress?.name || 'Guest Customer';
                 const customerEmail = order.email || 'No Email';
                 const customerPhone = order.shippingAddress?.phone || order.customerContact || 'No Phone';
@@ -1143,7 +1145,7 @@ export default function Admin() {
                 }
 
                 const locationStr = city ? `${city}, ${state} - ${pincode}` : '';
-                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Seller Preparing Item</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Waiting for Seller</span>';
+                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Confirmed</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Unconfirmed</span>';
 
                 const blackBoxHtml = `
                     <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
@@ -1247,8 +1249,10 @@ export default function Admin() {
                         
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 16px;">
                             <div>
-                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px;">
-                                    Order Ref: <strong style="color: var(--primary); font-size: 14px;">${order.jamba_order_id || order.razorpay_order_id || order.id}</strong>
+                                {/* 🔥 SELLER ACCEPTED BADGE ADDED HERE */}
+                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap;">
+                                    Order Ref: <strong style="color: var(--primary); font-size: 14px; margin-left: 4px;">${order.jamba_order_id || order.razorpay_order_id || order.id}</strong>
+                                    ${sellerAcceptedBadge}
                                 </div>
                                 
                                 <div style="font-size: 13px; font-weight: 500; color: var(--primary); border: 1px solid #e5e7eb; background: #f9fafb; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap;">
