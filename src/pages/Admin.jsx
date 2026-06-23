@@ -1249,7 +1249,7 @@ export default function Admin() {
                         
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 16px;">
                             <div>
-                                {/* 🔥 SELLER ACCEPTED BADGE ADDED HERE */}
+                                
                                 <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap;">
                                     Order Ref: <strong style="color: var(--primary); font-size: 14px; margin-left: 4px;">${order.jamba_order_id || order.razorpay_order_id || order.id}</strong>
                                     ${sellerAcceptedBadge}
