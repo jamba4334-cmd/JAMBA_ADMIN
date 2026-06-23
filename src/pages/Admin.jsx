@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, query, where } from "firebase/firestore";
+import { getFirestore } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -42,22 +42,23 @@ export default function Admin() {
     const [selectedSeller, setSelectedSeller] = useState(null);
     const [sellerModalTab, setSellerModalTab] = useState("profile");
     const [sellerPayouts, setSellerPayouts] = useState([]);
-    
-    // Global state for pending payout notifications
     const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
-
-    // Tribe & Category Settings State
     const [tribes, setTribes] = useState([]);
 
+    // --- SECURE AUTHENTICATION HELPER ---
+    const getAuthHeaders = async () => {
+        const user = auth.currentUser;
+        if (!user) return { 'Content-Type': 'application/json' };
+        const token = await user.getIdToken();
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        };
+    };
+
     // --- Tribe Handlers ---
-    const handleAddTribe = () => {
-        setTribes([...tribes, { id: Date.now(), name: '', categories: ['', '', '', ''] }]);
-    };
-
-    const handleAddCategory = (tribeId) => {
-        setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, ''] } : t));
-    };
-
+    const handleAddTribe = () => setTribes([...tribes, { id: Date.now(), name: '', categories: ['', '', '', ''] }]);
+    const handleAddCategory = (tribeId) => setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, ''] } : t));
     const handleCategoryChange = (tribeId, index, value) => {
         setTribes(tribes.map(t => {
             if (t.id === tribeId) {
@@ -68,22 +69,15 @@ export default function Admin() {
             return t;
         }));
     };
-
-    const handleTribeNameChange = (tribeId, value) => {
-        setTribes(tribes.map(t => t.id === tribeId ? { ...t, name: value } : t));
-    };
-
+    const handleTribeNameChange = (tribeId, value) => setTribes(tribes.map(t => t.id === tribeId ? { ...t, name: value } : t));
     const handleRemoveTribe = (tribeId) => {
         if(window.confirm("Are you sure you want to delete this entire Tribe and all its categories?")) {
             setTribes(tribes.filter(t => t.id !== tribeId));
         }
     };
-
     const handleRemoveCategory = (tribeId, catIndex) => {
         setTribes(tribes.map(t => {
-            if (t.id === tribeId) {
-                return { ...t, categories: t.categories.filter((_, i) => i !== catIndex) };
-            }
+            if (t.id === tribeId) return { ...t, categories: t.categories.filter((_, i) => i !== catIndex) };
             return t;
         }));
     };
@@ -93,16 +87,21 @@ export default function Admin() {
         btn.disabled = true;
         btn.innerText = "Saving...";
 
-        // Clean up empty data before saving to DB
         const cleanedTribes = tribes.map(t => ({
             ...t,
             categories: t.categories.filter(c => c.trim() !== '') 
         })).filter(t => t.name.trim() !== '' || t.categories.length > 0);
 
         try {
-            await setDoc(doc(db, "settings", "tribe_categories"), { tribes: cleanedTribes }, { merge: true });
-            setTribes(cleanedTribes); // Update UI with cleaned data
-            window.showToast("Tribe Settings Saved to Database!");
+            const headers = await getAuthHeaders();
+            const res = await fetch(`${API_BASE_URL}/admin/settings/tribe_categories`, {
+                method: "PUT",
+                headers: headers,
+                body: JSON.stringify({ tribes: cleanedTribes })
+            });
+            if(!res.ok) throw new Error("Failed to save tribes");
+            setTribes(cleanedTribes);
+            window.showToast("Tribe Settings Saved Securely!");
         } catch (error) {
             alert("Error saving tribes: " + error.message);
         } finally {
@@ -112,19 +111,6 @@ export default function Admin() {
     };
 
     useEffect(() => {
-
-        // --- NEW AUTHENTICATION HELPER FOR SECURE REQUESTS ---
-        async function getAuthHeaders() {
-            const user = auth.currentUser;
-            if (!user) return { 'Content-Type': 'application/json' };
-            
-            const token = await user.getIdToken();
-            return {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            };
-        }
-
         window.showSection = function(sectionId) {
             setActiveTab(sectionId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -187,7 +173,6 @@ export default function Admin() {
                     errorMsg.style.display = 'block';
                 }
             } catch (error) {
-                console.error("Login Error:", error);
                 errorMsg.innerText = "Login failed: " + error.message;
                 errorMsg.style.display = 'block';
             }
@@ -203,8 +188,6 @@ export default function Admin() {
             window.loadTribes();
             window.loadGlobalPayouts(); 
             window.loadAuthorizedSellers(); 
-            
-            // Wait to load heavy data to keep UI responsive
             setTimeout(() => {
                 loadAdminInventory(); 
                 loadAdminOrders(); 
@@ -214,27 +197,24 @@ export default function Admin() {
 
         window.loadTribes = async function() {
             try {
-                const docSnap = await getDoc(doc(db, "settings", "tribe_categories"));
-                if (docSnap.exists() && docSnap.data().tribes) {
-                    setTribes(docSnap.data().tribes);
+                const headers = await getAuthHeaders();
+                const res = await fetch(`${API_BASE_URL}/admin/settings/tribe_categories`, { headers });
+                const data = await res.json();
+                if (data.tribes) {
+                    setTribes(data.tribes);
                 } else {
-                    setTribes([
-                        { id: 1, name: 'Bodo', categories: ['Dokhona', 'Fasra', 'Blows', 'Jwmgra'] }
-                    ]);
+                    setTribes([{ id: 1, name: 'Bodo', categories: ['Dokhona', 'Fasra', 'Blows', 'Jwmgra'] }]);
                 }
-            } catch (error) { 
-                console.error("Error loading tribes:", error); 
-            }
+            } catch (error) { console.error("Error loading tribes:", error); }
         };
 
         window.loadGlobalPayouts = async function() {
             try {
-                const q = query(collection(db, "payout_requests"), where("status", "==", "pending"));
-                const snap = await getDocs(q);
-                setGlobalPendingPayouts(snap.size);
-            } catch(e) {
-                console.error("Error loading global payouts:", e);
-            }
+                const headers = await getAuthHeaders();
+                const res = await fetch(`${API_BASE_URL}/admin/payouts?status=pending`, { headers });
+                const data = await res.json();
+                setGlobalPendingPayouts(data.length || 0);
+            } catch(e) { console.error("Error loading global payouts:", e); }
         };
 
         window.loadAuthorizedSellers = async function() {
@@ -242,9 +222,11 @@ export default function Admin() {
             if(!list) return;
 
             try {
-                const querySnapshot = await getDocs(collection(db, "authorized_sellers"));
+                const headers = await getAuthHeaders();
+                const res = await fetch(`${API_BASE_URL}/admin/sellers`, { headers });
+                const sellersData = await res.json();
                 
-                if(querySnapshot.empty) {
+                if(sellersData.length === 0) {
                     list.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">No sellers currently authorized.</p>';
                     return;
                 }
@@ -252,13 +234,13 @@ export default function Admin() {
                 globalSellers = [];
                 let htmlString = '';
                 
-                for (const docSnap of querySnapshot.docs) {
-                    const email = docSnap.id;
-                    const data = docSnap.data();
-                    const dateAdded = data.addedAt ? new Date(data.addedAt).toLocaleDateString() : 'Unknown Date';
+                for (const seller of sellersData) {
+                    const email = seller.email;
+                    const dateAdded = seller.addedAt ? new Date(seller.addedAt).toLocaleDateString() : 'Unknown Date';
                     
-                    const profSnap = await getDoc(doc(db, "seller_profiles", email));
-                    const profileData = profSnap.exists() ? profSnap.data() : null;
+                    const profRes = await fetch(`${API_BASE_URL}/admin/seller_profiles/${email}`, { headers });
+                    const profileData = await profRes.json();
+                    
                     const brandName = profileData?.brandName || "Profile Not Setup";
                     const sellerName = profileData?.sellerName || "Unknown Owner";
                     
@@ -289,12 +271,10 @@ export default function Admin() {
                 
                 list.innerHTML = htmlString;
             } catch (e) {
-                console.error("Error loading sellers", e);
-                list.innerHTML = `<p style="color: var(--danger); font-size: 13px;">Error loading sellers. Check your Firebase Rules.</p>`;
+                list.innerHTML = `<p style="color: var(--danger); font-size: 13px;">Error loading sellers. Check API connection.</p>`;
             }
         };
 
-        // Cross-referencing products to ensure NO orders are missed for the Admin view
         window.openSellerDetails = async function(email) {
             const seller = globalSellers.find(s => s.email === email);
             if(!seller) return;
@@ -303,24 +283,17 @@ export default function Admin() {
             
             const myOrders = globalOrders.filter(o => {
                 if(!o.items) return false;
-                
                 return o.items.some(orderItem => {
                     const matchesStamp = (orderItem.sellerEmail && orderItem.sellerEmail === seller.email) || 
                                          (orderItem.brandName && seller.profile?.brandName && orderItem.brandName === seller.profile?.brandName);
-                                         
-                    const matchesLiveProduct = myProducts.some(myProduct => 
-                        myProduct.docId === orderItem.id || 
-                        myProduct.item_id === orderItem.item_id || 
-                        myProduct.title === orderItem.title
-                    );
-                    
+                    const matchesLiveProduct = myProducts.some(myProduct => myProduct.docId === orderItem.id || myProduct.item_id === orderItem.item_id || myProduct.title === orderItem.title);
                     return matchesStamp || matchesLiveProduct;
                 });
             });
 
-            const payoutSnap = await getDocs(query(collection(db, "payout_requests"), where("email", "==", seller.email)));
-            let payouts = [];
-            payoutSnap.forEach(d => payouts.push({id: d.id, ...d.data()}));
+            const headers = await getAuthHeaders();
+            const res = await fetch(`${API_BASE_URL}/admin/payouts?email=${email}`, { headers });
+            const payouts = await res.json();
 
             seller.products = myProducts;
             seller.orders = myOrders;
@@ -341,17 +314,17 @@ export default function Admin() {
             const emailInput = document.getElementById('new-seller-email');
             const email = emailInput.value.trim().toLowerCase();
             const btn = document.getElementById('add-seller-btn');
-
             if(!email) return;
 
             btn.disabled = true;
             btn.innerText = "Authorizing...";
 
             try {
-                await setDoc(doc(db, "authorized_sellers", email), {
-                    email: email,
-                    addedAt: new Date().toISOString(),
-                    addedBy: ALLOWED_ADMIN_EMAIL
+                const headers = await getAuthHeaders();
+                await fetch(`${API_BASE_URL}/admin/sellers`, {
+                    method: "POST",
+                    headers: headers,
+                    body: JSON.stringify({ email: email })
                 });
                 window.showToast(email + " has been authorized!");
                 emailInput.value = "";
@@ -365,9 +338,10 @@ export default function Admin() {
         };
 
         window.removeAuthorizedSeller = async function(email) {
-            if(confirm(`Are you absolutely sure you want to revoke access for ${email}?\n\nThey will be locked out of the Seller Portal immediately.`)) {
+            if(confirm(`Are you absolutely sure you want to revoke access for ${email}?`)) {
                 try {
-                    await deleteDoc(doc(db, "authorized_sellers", email));
+                    const headers = await getAuthHeaders();
+                    await fetch(`${API_BASE_URL}/admin/sellers/${email}`, { method: "DELETE", headers: headers });
                     window.showToast("Access revoked for " + email);
                     window.loadAuthorizedSellers();
                 } catch(e) {
@@ -387,7 +361,6 @@ export default function Admin() {
             if (totalImages > 0) {
                 promptContent.style.display = 'none';
                 previewContainer.style.display = 'flex';
-
                 let html = '';
                 
                 currentEditImageUrls.forEach((url, index) => {
@@ -496,7 +469,6 @@ export default function Admin() {
                 const method = editingProductId ? "PUT" : "POST";
                 const endpoint = editingProductId ? `${API_BASE_URL}/admin/products/${editingProductId}` : `${API_BASE_URL}/admin/products`;
 
-                // SECURE FETCH 
                 const headers = await getAuthHeaders();
                 const response = await fetch(endpoint, {
                     method: method,
@@ -656,11 +628,11 @@ export default function Admin() {
 
         async function loadSiteSettings() {
             try {
-                const docRef = doc(db, "settings", "hero_banners");
-                const docSnap = await getDoc(docRef);
+                const headers = await getAuthHeaders();
+                const res = await fetch(`${API_BASE_URL}/admin/settings/hero_banners`, { headers });
+                const data = await res.json();
                 
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
+                if (data && Object.keys(data).length > 0) {
                     activeWomenVideoUrl = data.women_video || "";
                     activeMenVideoUrl = data.men_video || "";
                     
@@ -704,12 +676,16 @@ export default function Admin() {
             btn.innerText = "Saving...";
 
             try {
-                await setDoc(doc(db, "settings", "hero_banners"), {
-                    login_image_url: newUrl,
-                    last_updated: new Date().toISOString()
-                }, { merge: true }); 
-
-                window.showToast("Login Image updated successfully!");
+                const headers = await getAuthHeaders();
+                await fetch(`${API_BASE_URL}/admin/settings/hero_banners`, {
+                    method: "PUT",
+                    headers: headers,
+                    body: JSON.stringify({
+                        login_image_url: newUrl,
+                        last_updated: new Date().toISOString()
+                    })
+                });
+                window.showToast("Login Image updated securely!");
                 msg.innerText = "";
             } catch (error) {
                 msg.innerText = "❌ Update Error: " + error.message;
@@ -729,12 +705,16 @@ export default function Admin() {
             btn.innerText = "Saving...";
 
             try {
-                await setDoc(doc(db, "settings", "hero_banners"), {
-                    promo_text: newText,
-                    last_updated: new Date().toISOString()
-                }, { merge: true }); 
-
-                window.showToast("Banner text updated successfully!");
+                const headers = await getAuthHeaders();
+                await fetch(`${API_BASE_URL}/admin/settings/hero_banners`, {
+                    method: "PUT",
+                    headers: headers,
+                    body: JSON.stringify({
+                        promo_text: newText,
+                        last_updated: new Date().toISOString()
+                    })
+                });
+                window.showToast("Banner text updated securely!");
             } catch (error) {
                 msg.innerText = "❌ Update Error: " + error.message;
                 msg.style.color = "var(--danger)";
@@ -778,13 +758,18 @@ export default function Admin() {
                     finalMenUrl = await getDownloadURL(menRef);
                 }
 
-                await setDoc(doc(db, "settings", "hero_banners"), {
-                    women_video: finalWomenUrl,
-                    men_video: finalMenUrl,
-                    last_updated: new Date().toISOString()
-                }, { merge: true });
+                const headers = await getAuthHeaders();
+                await fetch(`${API_BASE_URL}/admin/settings/hero_banners`, {
+                    method: "PUT",
+                    headers: headers,
+                    body: JSON.stringify({
+                        women_video: finalWomenUrl,
+                        men_video: finalMenUrl,
+                        last_updated: new Date().toISOString()
+                    })
+                });
 
-                window.showToast("Videos uploaded successfully!");
+                window.showToast("Videos uploaded securely!");
                 msg.innerText = "";
                 document.getElementById('setting-women-video-file').value = "";
                 document.getElementById('setting-men-video-file').value = "";
@@ -801,7 +786,6 @@ export default function Admin() {
 
         async function loadAdminInventory() {
             try {
-                // SECURE FETCH WITH PAGINATION
                 const headers = await getAuthHeaders();
                 const response = await fetch(`${API_BASE_URL}/admin/products?limit=50`, {
                     method: 'GET',
@@ -948,7 +932,6 @@ export default function Admin() {
 
         async function loadAdminOrders() {
             try {
-                // SECURE FETCH WITH PAGINATION
                 const headers = await getAuthHeaders();
                 const response = await fetch(`${API_BASE_URL}/admin/orders?limit=50`, {
                     method: 'GET',
@@ -1014,7 +997,6 @@ export default function Admin() {
             }
         };
 
-        // NEW CLOUDINARY PDF UPLOAD HANDLER
         window.handleLabelUpload = async function(orderId) {
             const fileInput = document.getElementById(`pdf-file-${orderId}`);
             if (!fileInput) return;
@@ -1037,7 +1019,6 @@ export default function Admin() {
                 formData.append("file", file);
                 formData.append("upload_preset", "jambawear_preset");
 
-                // Cloudinary upload
                 const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/auto/upload", { 
                     method: "POST", 
                     body: formData 
@@ -1048,7 +1029,6 @@ export default function Admin() {
                     throw new Error(data.error?.message || "Cloudinary upload failed.");
                 }
 
-                // Send URL to secure backend
                 const headers = await getAuthHeaders();
                 await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
                     method: "PUT",
@@ -1230,7 +1210,6 @@ export default function Admin() {
                 const existingTracking = order.trackingId || '';
                 const existingLabel = order.shipping_label_url || order.shippingLabel || '';
 
-                // NEW SEPARATE UPLOAD AND SELECT HTML
                 const labelHtml = existingLabel 
                     ? `<div style="display: flex; align-items: center; gap: 8px; border-left: 1px solid #e5e7eb; padding-left: 16px;">
                          <a href="${existingLabel}" target="_blank" rel="noopener noreferrer" style="padding: 8px 12px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
@@ -1250,7 +1229,6 @@ export default function Admin() {
                          </button>
                        </div>`;
 
-                // SAVE BUTTON MOVED TO THE LEFT
                 const trackingHtml = `
                     <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                         <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 120px;">
@@ -1333,7 +1311,6 @@ export default function Admin() {
             }
 
             const filteredOrders = globalOrders.filter(order => {
-                // 🔥 UPDATED: Includes the new jamba_order_id in the search
                 const jambaId = (order.jamba_order_id || "").toLowerCase();
                 const orderId = (order.razorpay_order_id || order.id || "").toLowerCase();
                 const contactInfo = (order.email || order.customerContact || "").toLowerCase();
@@ -1356,7 +1333,6 @@ export default function Admin() {
 
         async function loadCustomerDetails() {
             try {
-                // SECURE FETCH WITH PAGINATION
                 const headers = await getAuthHeaders();
                 const response = await fetch(`${API_BASE_URL}/admin/customers?limit=50`, {
                     method: 'GET',
@@ -1432,12 +1408,10 @@ export default function Admin() {
             const filteredCustomers = globalCustomers.filter(user => {
                 const name = (user.name || "").toLowerCase();
                 const contactInfo = (user.email || user.phone || "").toLowerCase();
-                
                 let addressString = "";
                 if (user.address) {
                     addressString = `${user.address.name} ${user.address.phone} ${user.address.district} ${user.address.state}`.toLowerCase();
                 }
-
                 return name.includes(lowerTerm) || contactInfo.includes(lowerTerm) || addressString.includes(lowerTerm);
             });
             renderCustomerList(filteredCustomers);
@@ -1463,10 +1437,15 @@ export default function Admin() {
                 ifsc: document.getElementById('admin-edit-ifsc').value,
             };
 
-            await setDoc(doc(db, "seller_profiles", selectedSeller.email), updatedProfile, { merge: true });
+            const headers = await getAuthHeaders();
+            await fetch(`${API_BASE_URL}/admin/seller_profiles/${selectedSeller.email}`, {
+                method: "PUT",
+                headers: headers,
+                body: JSON.stringify(updatedProfile)
+            });
             
             setSelectedSeller(prev => ({...prev, profile: updatedProfile}));
-            window.showToast("Seller Profile Updated Successfully!");
+            window.showToast("Seller Profile Updated Securely!");
             window.loadAuthorizedSellers(); 
         } catch (err) {
             alert("Error updating profile: " + err.message);
@@ -1481,15 +1460,20 @@ export default function Admin() {
         if(!utr) return;
 
         try {
-            await updateDoc(doc(db, "payout_requests", payoutId), {
-                status: 'paid',
-                utr: utr,
-                paid_at: new Date().toISOString()
+            const headers = await getAuthHeaders();
+            await fetch(`${API_BASE_URL}/admin/payouts/${payoutId}`, {
+                method: "PUT",
+                headers: headers,
+                body: JSON.stringify({
+                    status: 'paid',
+                    utr: utr,
+                    paid_at: new Date().toISOString()
+                })
             });
             
             setSellerPayouts(prev => prev.map(p => p.id === payoutId ? { ...p, status: 'paid', utr: utr } : p));
-            window.showToast("Payout Marked as Paid!");
-             window.loadGlobalPayouts();
+            window.showToast("Payout Marked as Paid Securely!");
+            window.loadGlobalPayouts();
         } catch(e) {
             alert("Error updating payout: " + e.message);
         }
