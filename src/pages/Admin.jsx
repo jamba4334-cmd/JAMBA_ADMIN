@@ -113,6 +113,18 @@ export default function Admin() {
 
     useEffect(() => {
 
+        // --- NEW AUTHENTICATION HELPER FOR SECURE REQUESTS ---
+        async function getAuthHeaders() {
+            const user = auth.currentUser;
+            if (!user) return { 'Content-Type': 'application/json' };
+            
+            const token = await user.getIdToken();
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            };
+        }
+
         window.showSection = function(sectionId) {
             setActiveTab(sectionId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -188,12 +200,16 @@ export default function Admin() {
          
         async function bootstrapData() {
             loadSiteSettings();
-            loadCustomerDetails();
-            await loadAdminInventory(); 
-            loadAdminOrders(); 
-            window.loadAuthorizedSellers(); 
-            window.loadGlobalPayouts(); 
             window.loadTribes();
+            window.loadGlobalPayouts(); 
+            window.loadAuthorizedSellers(); 
+            
+            // Wait to load heavy data to keep UI responsive
+            setTimeout(() => {
+                loadAdminInventory(); 
+                loadAdminOrders(); 
+                loadCustomerDetails();
+            }, 500);
         }
 
         window.loadTribes = async function() {
@@ -252,7 +268,7 @@ export default function Admin() {
                         <div class="card" style="padding: 20px; display:flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                             <div style="display: flex; gap: 16px; align-items: center;">
                                 <div style="width: 50px; height: 50px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; overflow: hidden;">
-                                    ${profileData?.profilePhoto ? `<img src="${profileData.profilePhoto}" style="width:100%; height:100%; object-fit:cover;" />` : brandName.charAt(0)}
+                                    ${profileData?.profilePhoto ? `<img src="${profileData.profilePhoto}" loading="lazy" style="width:100%; height:100%; object-fit:cover;" />` : brandName.charAt(0)}
                                 </div>
                                 <div>
                                     <strong style="color: var(--primary); font-size: 16px;">${brandName}</strong><br>
@@ -278,6 +294,7 @@ export default function Admin() {
             }
         };
 
+        // Cross-referencing products to ensure NO orders are missed for the Admin view
         window.openSellerDetails = async function(email) {
             const seller = globalSellers.find(s => s.email === email);
             if(!seller) return;
@@ -376,7 +393,7 @@ export default function Admin() {
                 currentEditImageUrls.forEach((url, index) => {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
-                            <img src="${url}" alt="Preview" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--input-border);">
+                            <img src="${url}" alt="Preview" loading="lazy" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--input-border);">
                             <button type="button" onclick="window.removeEditImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `;
@@ -386,7 +403,7 @@ export default function Admin() {
                     const objectUrl = URL.createObjectURL(file);
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
-                            <img src="${objectUrl}" alt="Preview" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid var(--success);">
+                            <img src="${objectUrl}" alt="Preview" loading="lazy" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid var(--success);">
                             <button type="button" onclick="window.removeNewImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `;
@@ -479,9 +496,11 @@ export default function Admin() {
                 const method = editingProductId ? "PUT" : "POST";
                 const endpoint = editingProductId ? `${API_BASE_URL}/admin/products/${editingProductId}` : `${API_BASE_URL}/admin/products`;
 
+                // SECURE FETCH 
+                const headers = await getAuthHeaders();
                 const response = await fetch(endpoint, {
                     method: method,
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify(productData)
                 });
 
@@ -526,9 +545,10 @@ export default function Admin() {
         window.approveProduct = async function(productId) {
             if(confirm("Approve this product and make it live on the store?")) {
                 try {
+                    const headers = await getAuthHeaders();
                     await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                         method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: headers,
                         body: JSON.stringify({ approval_status: 'approved', isHidden: false })
                     });
                     window.showToast("Product Approved & Published!");
@@ -542,9 +562,10 @@ export default function Admin() {
         window.rejectProduct = async function(productId) {
             if(confirm("Reject this product? The seller will be notified in their dashboard.")) {
                 try {
+                    const headers = await getAuthHeaders();
                     await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                         method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: headers,
                         body: JSON.stringify({ approval_status: 'rejected', isHidden: true })
                     });
                     window.showToast("Product Rejected.");
@@ -556,18 +577,20 @@ export default function Admin() {
         };
 
         window.toggleProductHide = async function(productId, newState) {
+            const headers = await getAuthHeaders();
             await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                 method: "PUT",
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify({ isHidden: newState })
             });
             loadAdminInventory();
         };
 
         window.toggleProductStock = async function(productId, newState) {
+            const headers = await getAuthHeaders();
             await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
                 method: "PUT",
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify({ isOutOfStock: newState })
             });
             loadAdminInventory();
@@ -575,7 +598,11 @@ export default function Admin() {
 
         window.deleteProduct = async function(productId) {
             if(confirm("Are you sure you want to completely delete this product?")) {
-                await fetch(`${API_BASE_URL}/admin/products/${productId}`, { method: "DELETE" });
+                const headers = await getAuthHeaders();
+                await fetch(`${API_BASE_URL}/admin/products/${productId}`, { 
+                    method: "DELETE",
+                    headers: headers 
+                });
                 loadAdminInventory();
             }
         };
@@ -739,8 +766,7 @@ export default function Admin() {
                 let finalWomenUrl = activeWomenVideoUrl;
                 let finalMenUrl = activeMenVideoUrl;
 
-                // 🚀 Firebase Storage for Heavy Videos
-                if (womenFile) {
+                 if (womenFile) {
                     const womenRef = ref(storage, 'hero_videos/women_hero.mp4');
                     await uploadBytes(womenRef, womenFile);
                     finalWomenUrl = await getDownloadURL(womenRef);
@@ -775,7 +801,13 @@ export default function Admin() {
 
         async function loadAdminInventory() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/products`);
+                // SECURE FETCH WITH PAGINATION
+                const headers = await getAuthHeaders();
+                const response = await fetch(`${API_BASE_URL}/admin/products?limit=50`, {
+                    method: 'GET',
+                    headers: headers
+                });
+                
                 if (!response.ok) throw new Error("Failed to load inventory.");
                 
                 const data = await response.json();
@@ -876,7 +908,7 @@ export default function Admin() {
                             ${actionButtonsHtml}
                         </div>
                     </div>
-                    <img src="${mainImgUrl}" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
+                    <img src="${mainImgUrl}" loading="lazy" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
                 </div>`;
             });
             
@@ -916,7 +948,13 @@ export default function Admin() {
 
         async function loadAdminOrders() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/orders`);
+                // SECURE FETCH WITH PAGINATION
+                const headers = await getAuthHeaders();
+                const response = await fetch(`${API_BASE_URL}/admin/orders?limit=50`, {
+                    method: 'GET',
+                    headers: headers
+                });
+
                 if (!response.ok) throw new Error("Failed to load orders.");
                 
                 const data = await response.json();
@@ -932,9 +970,10 @@ export default function Admin() {
         window.updateOrderStatus = async function(orderId, newStatus) {
             if(confirm(`Are you sure you want to mark this order as ${newStatus.toUpperCase()}?`)) {
                 try {
+                    const headers = await getAuthHeaders();
                     await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
                         method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: headers,
                         body: JSON.stringify({ status: newStatus })
                     });
                     loadAdminOrders();
@@ -959,9 +998,10 @@ export default function Admin() {
             btn.disabled = true;
 
             try {
+                const headers = await getAuthHeaders();
                 await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
                     method: "PUT",
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ trackingId: trackingId, courierName: courierName })
                 });
                 window.showToast("Tracking Info Saved Successfully!");
@@ -974,43 +1014,58 @@ export default function Admin() {
             }
         };
 
-        // 🚀 NEW: Securely uploads Shipping Labels directly to Cloudinary (PDFs accepted!)
-        window.handleLabelUpload = async function(orderId, inputElement) {
-            const file = inputElement.files[0];
-            if (!file) return;
+        // NEW CLOUDINARY PDF UPLOAD HANDLER
+        window.handleLabelUpload = async function(orderId) {
+            const fileInput = document.getElementById(`pdf-file-${orderId}`);
+            if (!fileInput) return;
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert("Please select a PDF file from your device first.");
+                return;
+            }
 
-            const labelText = document.getElementById(`label-text-${orderId}`);
-            if (labelText) labelText.innerText = "Uploading...";
+            const uploadBtn = document.getElementById(`upload-pdf-btn-${orderId}`);
+            const originalText = uploadBtn ? uploadBtn.innerHTML : "Upload Label";
+            if (uploadBtn) {
+                uploadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading...';
+                uploadBtn.disabled = true;
+            }
 
             try {
                 const formData = new FormData();
                 formData.append("file", file);
                 formData.append("upload_preset", "jambawear_preset");
-                
-                // We use /auto/upload so Cloudinary smartly handles PDFs without forcing image conversion
+
+                // Cloudinary upload
                 const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/auto/upload", { 
                     method: "POST", 
                     body: formData 
                 });
                 const data = await res.json();
-                
+
                 if (!data.secure_url) {
-                    throw new Error(data.error?.message || "Label upload failed.");
+                    throw new Error(data.error?.message || "Cloudinary upload failed.");
                 }
 
+                // Send URL to secure backend
+                const headers = await getAuthHeaders();
                 await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
                     method: "PUT",
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ shipping_label_url: data.secure_url })
                 });
 
-                window.showToast("Shipping label uploaded via Cloudinary!");
+                window.showToast("Shipping label securely uploaded to Cloudinary!");
                 loadAdminOrders(); 
             } catch (err) {
                 alert("Label upload failed: " + err.message);
             } finally {
-                if (labelText) labelText.innerText = "Upload Label";
-                inputElement.value = ""; 
+                if (uploadBtn) {
+                    uploadBtn.innerHTML = originalText;
+                    uploadBtn.disabled = false;
+                }
+                if (fileInput) fileInput.value = ""; 
             }
         };
 
@@ -1135,7 +1190,7 @@ export default function Admin() {
                         <div style="max-height: 150px; overflow-y: auto; padding-right: 5px;">
                     ` + order.items.map(i => `
                         <div style="display: flex; align-items: flex-start; gap: 14px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee;">
-                            <img src="${i.image || 'https://via.placeholder.com/80x100'}" style="width: 50px; height: 60px; min-width: 50px; object-fit: cover; border-radius: 4px; border: 1px solid var(--input-border); box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                            <img src="${i.image || 'https://via.placeholder.com/80x100'}" loading="lazy" style="width: 50px; height: 60px; min-width: 50px; object-fit: cover; border-radius: 4px; border: 1px solid var(--input-border); box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                             <div style="line-height: 1.4; font-size:13px; padding-top: 2px;">
                                 <strong style="font-size: 13px;">${i.quantity}x</strong> ${i.title} <br>
                                 <span style="color: var(--text-muted);">Size: ${i.size || 'N/A'}</span><br>
@@ -1175,28 +1230,37 @@ export default function Admin() {
                 const existingTracking = order.trackingId || '';
                 const existingLabel = order.shipping_label_url || order.shippingLabel || '';
 
-                // 🚀 FIXED: Dynamic Label HTML (Upload Button OR View Label Button)
+                // NEW SEPARATE UPLOAD AND SELECT HTML
                 const labelHtml = existingLabel 
-                    ? `<div style="display: flex; align-items: center; gap: 8px;">
-                         <a href="${existingLabel}" target="_blank" style="padding: 8px 12px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;"><i class="fa-solid fa-file-invoice"></i> View Label</a>
-                         <label style="cursor: pointer; color: var(--text-muted); font-size: 12px; text-decoration: underline;">
-                            Replace
-                            <input type="file" style="display: none;" onchange="window.handleLabelUpload('${order.id}', this)" />
-                         </label>
+                    ? `<div style="display: flex; align-items: center; gap: 8px; border-left: 1px solid #e5e7eb; padding-left: 16px;">
+                         <a href="${existingLabel}" target="_blank" rel="noopener noreferrer" style="padding: 8px 12px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+                            <i class="fa-solid fa-file-pdf"></i> View Label
+                         </a>
+                         <div style="display: flex; align-items: center; gap: 6px;">
+                            <input type="file" id="pdf-file-${order.id}" accept=".pdf" style="font-size: 11px; max-width: 170px;">
+                            <button type="button" id="upload-pdf-btn-${order.id}" class="action-btn" onclick="window.handleLabelUpload('${order.id}')" style="padding: 6px 10px; background: #f3f4f6; border: 1px solid #d1d5db; font-size: 11px; color: var(--text-main);">
+                                Replace PDF
+                            </button>
+                         </div>
                        </div>`
-                    : `<label class="action-btn" style="background: #f3f4f6; color: var(--text-main); border: 1px solid var(--input-border); cursor: pointer; padding: 8px 12px; font-size: 12px; margin: 0; display: inline-flex; align-items: center; gap: 6px;">
-                         <i class="fa-solid fa-cloud-arrow-up"></i> <span id="label-text-${order.id}">Upload Label</span>
-                         <input type="file" style="display: none;" onchange="window.handleLabelUpload('${order.id}', this)" />
-                       </label>`;
+                    : `<div style="display: flex; align-items: center; gap: 8px; border-left: 1px solid #e5e7eb; padding-left: 16px;">
+                         <input type="file" id="pdf-file-${order.id}" accept=".pdf" style="font-size: 12px; max-width: 200px;">
+                         <button type="button" id="upload-pdf-btn-${order.id}" class="action-btn" onclick="window.handleLabelUpload('${order.id}')" style="padding: 8px 12px; background: #f3f4f6; border: 1px solid #d1d5db; font-size: 12px; color: var(--text-main);">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload Label
+                         </button>
+                       </div>`;
 
+                // SAVE BUTTON MOVED TO THE LEFT
                 const trackingHtml = `
-                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                        <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name (e.g. Delhivery)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
-                        <input type="text" id="tracking-id-${order.id}" value="${existingTracking}" placeholder="Tracking ID (e.g. 123456789)" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 150px;">
-                        ${labelHtml}
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 120px;">
+                        <input type="text" id="tracking-id-${order.id}" value="${existingTracking}" placeholder="Tracking ID" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 120px;">
+                        
                         <button type="button" id="track-btn-${order.id}" class="action-btn" onclick="window.updateTrackingInfo('${order.id}')" style="padding: 9px 16px; background: var(--primary); color: white; border: none; font-weight: 600;">
                             Save Tracking
                         </button>
+                        
+                        ${labelHtml}
                     </div>
                 `;
 
@@ -1254,7 +1318,7 @@ export default function Admin() {
             ordersList.innerHTML = htmlString; 
         }
 
-        window.handleCustomerSearch = function(searchTerm) {
+        window.handleOrderSearch = function(searchTerm) {
             const lowerTerm = searchTerm.toLowerCase();
             
             const activeTabBtn = document.querySelector('#orders .filter-btn.active');
@@ -1288,7 +1352,13 @@ export default function Admin() {
 
         async function loadCustomerDetails() {
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/customers`);
+                // SECURE FETCH WITH PAGINATION
+                const headers = await getAuthHeaders();
+                const response = await fetch(`${API_BASE_URL}/admin/customers?limit=50`, {
+                    method: 'GET',
+                    headers: headers
+                });
+                
                 if (!response.ok) throw new Error("Failed to load customers.");
                 
                 const data = await response.json();
@@ -1445,7 +1515,6 @@ export default function Admin() {
                     <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
                     
-                    {/* NEW TRIBE SETTINGS TAB */}
                     <li className={`nav-item ${activeTab === 'tribe-settings' ? 'active' : ''}`} onClick={() => window.showSection('tribe-settings')}><i className="fa-solid fa-sitemap"></i> Tribe Settings</li>
                     
                     <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
@@ -1646,9 +1715,6 @@ export default function Admin() {
                     </form>
                 </div>
 
-                {/* ========================================= */}
-                {/* NEW SECTION: TRIBE & CATEGORY SETTINGS UI */}
-                {/* ========================================= */}
                 <div id="tribe-settings" className={`content-section ${activeTab === 'tribe-settings' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <span className="section-title">Collection Manager (Tribe Filters)</span>
@@ -1732,7 +1798,6 @@ export default function Admin() {
                         </div>
                     </div>
                 </div>
-                {/* ========================================= */}
 
                 <div id="orders" className={`content-section ${activeTab === 'orders' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -1920,7 +1985,7 @@ export default function Admin() {
                                     {selectedSeller.products.length === 0 ? <p style={{color: 'var(--text-muted)'}}>No products uploaded by this seller.</p> : null}
                                     {selectedSeller.products.map(p => (
                                         <div key={p.docId || p.id} style={{ display: 'flex', gap: '16px', padding: '16px', borderBottom: '1px solid #eee' }}>
-                                            <img src={p.images?.[0] || 'https://via.placeholder.com/80'} style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: '6px' }} />
+                                            <img src={p.images?.[0] || 'https://via.placeholder.com/80'} loading="lazy" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: '6px' }} />
                                             <div>
                                                 <strong style={{fontSize: '15px', color: 'var(--primary)'}}>{p.title}</strong>
                                                 <div style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px'}}>
