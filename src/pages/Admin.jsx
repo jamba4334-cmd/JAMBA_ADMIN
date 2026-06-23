@@ -1269,7 +1269,9 @@ export default function Admin() {
                         
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 16px;">
                             <div>
-                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px;">Order Ref: ${order.razorpay_order_id || order.id}</div>
+                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px;">
+                                    Order Ref: <strong style="color: var(--primary); font-size: 14px;">${order.jamba_order_id || order.razorpay_order_id || order.id}</strong>
+                                </div>
                                 
                                 <div style="font-size: 13px; font-weight: 500; color: var(--primary); border: 1px solid #e5e7eb; background: #f9fafb; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                                     <span><i class="fa-solid fa-user" style="color: var(--text-muted);"></i> ${customerName}</span>
@@ -1331,6 +1333,8 @@ export default function Admin() {
             }
 
             const filteredOrders = globalOrders.filter(order => {
+                // 🔥 UPDATED: Includes the new jamba_order_id in the search
+                const jambaId = (order.jamba_order_id || "").toLowerCase();
                 const orderId = (order.razorpay_order_id || order.id || "").toLowerCase();
                 const contactInfo = (order.email || order.customerContact || "").toLowerCase();
                 const orderStatus = order.status ? order.status.toLowerCase() : 'pending';
@@ -1340,7 +1344,7 @@ export default function Admin() {
                     addressString = `${order.shippingAddress.name} ${order.shippingAddress.phone} ${order.shippingAddress.district} ${order.shippingAddress.state}`.toLowerCase();
                 }
                 
-                const matchesSearch = orderId.includes(lowerTerm) || contactInfo.includes(lowerTerm) || addressString.includes(lowerTerm);
+                const matchesSearch = jambaId.includes(lowerTerm) || orderId.includes(lowerTerm) || contactInfo.includes(lowerTerm) || addressString.includes(lowerTerm);
                 
                 if (currentStatusFilter === 'all') return matchesSearch;
                 if (currentStatusFilter === 'pending') return matchesSearch && (orderStatus === 'pending' || orderStatus === 'created');
