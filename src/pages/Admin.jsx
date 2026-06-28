@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, query, where } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, updateDoc, addDoc, query, where, serverTimestamp } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -42,7 +42,22 @@ export default function Admin() {
     const [sellerModalTab, setSellerModalTab] = useState("profile");
     const [sellerPayouts, setSellerPayouts] = useState([]);
     const [globalPendingPayouts, setGlobalPendingPayouts] = useState(0);
+    
     const [tribes, setTribes] = useState([]);
+    const [activeBanners, setActiveBanners] = useState({}); 
+
+    const [messageTab, setMessageTab] = useState("inbox");
+    const [supportTickets, setSupportTickets] = useState([]);
+    const [activeTicket, setActiveTicket] = useState(null);
+
+    const [allReviews, setAllReviews] = useState([]);
+    const [reviewFilter, setReviewFilter] = useState('all');
+
+    // 🔥 NEW UI STATES
+    const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+    const [fullscreenImage, setFullscreenImage] = useState(null);
+    const [expandedOrders, setExpandedOrders] = useState({});
+    const [orderFilterStatus, setOrderFilterStatus] = useState('all');
 
     const getAuthHeaders = async () => {
         const user = auth.currentUser;
@@ -54,27 +69,125 @@ export default function Admin() {
         };
     };
 
-    const handleAddTribe = () => setTribes([...tribes, { id: Date.now(), name: '', categories: ['', '', '', ''] }]);
-    const handleAddCategory = (tribeId) => setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, ''] } : t));
-    const handleCategoryChange = (tribeId, index, value) => {
+    const handleAddTribe = () => setTribes([...tribes, { id: Date.now(), name: '', categories: [], banners: [{ text: '', image: '' }] }]);
+    
+    const handleAddCategory = (tribeId) => {
+        setTribes(tribes.map(t => t.id === tribeId ? { ...t, categories: [...t.categories, { name: '', image: '' }] } : t));
+    };
+
+    const handleCategoryNameChange = (tribeId, index, value) => {
         setTribes(tribes.map(t => {
             if (t.id === tribeId) {
                 const newCats = [...t.categories];
-                newCats[index] = value;
+                newCats[index] = { ...newCats[index], name: value };
                 return { ...t, categories: newCats };
             }
             return t;
         }));
     };
+
+    const handleCategoryImgUpload = async (tribeId, catIndex, e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+
+        window.showToast("Uploading category image...");
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", "jambawear_preset");
+
+        try {
+            const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
+            const data = await res.json();
+            
+            if (data.secure_url) {
+                setTribes(prevTribes => prevTribes.map(t => {
+                    if (t.id === tribeId) {
+                        const newCats = [...t.categories];
+                        newCats[catIndex] = { ...newCats[catIndex], image: data.secure_url };
+                        return { ...t, categories: newCats };
+                    }
+                    return t;
+                }));
+                window.showToast("Image uploaded successfully!");
+            }
+        } catch (error) { alert("Error uploading image: " + error.message); }
+    };
+
     const handleTribeNameChange = (tribeId, value) => setTribes(tribes.map(t => t.id === tribeId ? { ...t, name: value } : t));
+    
     const handleRemoveTribe = (tribeId) => {
-        if(window.confirm("Are you sure you want to delete this entire Tribe and all its categories?")) {
+        if(window.confirm("Are you sure you want to delete this entire Category Group?")) {
             setTribes(tribes.filter(t => t.id !== tribeId));
         }
     };
+    
     const handleRemoveCategory = (tribeId, catIndex) => {
         setTribes(tribes.map(t => {
             if (t.id === tribeId) return { ...t, categories: t.categories.filter((_, i) => i !== catIndex) };
+            return t;
+        }));
+    };
+
+    const handleBannerTextChange = (tribeId, index, newText) => {
+        setTribes(tribes.map(t => {
+            if (t.id === tribeId) {
+                const newBanners = [...(t.banners || [])];
+                if (!newBanners[index]) newBanners[index] = { text: '', image: '' };
+                newBanners[index] = { ...newBanners[index], text: newText };
+                return { ...t, banners: newBanners };
+            }
+            return t;
+        }));
+    };
+
+    const handleBannerImageUpload = async (tribeId, index, e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+
+        window.showToast("Uploading banner image...");
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", "jambawear_preset");
+
+        try {
+            const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
+            const data = await res.json();
+            
+            if (data.secure_url) {
+                setTribes(prevTribes => prevTribes.map(t => {
+                    if (t.id === tribeId) {
+                        const newBanners = [...(t.banners || [])];
+                        if (!newBanners[index]) newBanners[index] = { text: '', image: '' };
+                        newBanners[index] = { ...newBanners[index], image: data.secure_url };
+                        return { ...t, banners: newBanners };
+                    }
+                    return t;
+                }));
+                window.showToast("Banner image uploaded successfully!");
+            }
+        } catch (error) { alert("Error uploading banner image: " + error.message); }
+    };
+
+    const addBannerSlide = (tribeId) => {
+        setTribes(tribes.map(t => {
+            if(t.id === tribeId) {
+                const newBanners = [...(t.banners || []), { text: '', image: '' }];
+                setActiveBanners(prev => ({...prev, [tribeId]: newBanners.length - 1}));
+                return { ...t, banners: newBanners };
+            }
+            return t;
+        }));
+    };
+
+    const removeBannerSlide = (tribeId, index) => {
+        setTribes(tribes.map(t => {
+            if(t.id === tribeId) {
+                let newBanners = [...(t.banners || [])];
+                newBanners.splice(index, 1);
+                if(newBanners.length === 0) newBanners = [{text: '', image: ''}];
+                setActiveBanners(prev => ({...prev, [tribeId]: Math.max(0, index - 1)}));
+                return { ...t, banners: newBanners };
+            }
             return t;
         }));
     };
@@ -86,8 +199,9 @@ export default function Admin() {
 
         const cleanedTribes = tribes.map(t => ({
             ...t,
-            categories: t.categories.filter(c => c.trim() !== '') 
-        })).filter(t => t.name.trim() !== '' || t.categories.length > 0);
+            categories: t.categories.filter(c => c.name && c.name.trim() !== ''),
+            banners: (t.banners || []).filter(b => b.text.trim() !== '' || b.image !== '')
+        })).filter(t => t.name.trim() !== '' || t.categories.length > 0 || (t.banners && t.banners.length > 0));
 
         try {
             const headers = await getAuthHeaders();
@@ -96,11 +210,11 @@ export default function Admin() {
                 headers: headers,
                 body: JSON.stringify({ tribes: cleanedTribes })
             });
-            if(!res.ok) throw new Error("Failed to save tribes");
+            if(!res.ok) throw new Error("Failed to save category settings");
             setTribes(cleanedTribes);
-            window.showToast("Tribe Settings Saved Securely!");
+            window.showToast("Category & Banner Settings Saved Securely!");
         } catch (error) {
-            alert("Error saving tribes: " + error.message);
+            alert("Error saving settings: " + error.message);
         } finally {
             btn.disabled = false;
             btn.innerText = "Save Changes";
@@ -111,6 +225,7 @@ export default function Admin() {
         window.showSection = function(sectionId) {
             setActiveTab(sectionId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
+            if(sectionId === 'messages') loadSupportTickets();
         };
 
         window.showToast = function(message) {
@@ -189,8 +304,56 @@ export default function Admin() {
                 loadAdminInventory(); 
                 loadAdminOrders(); 
                 loadCustomerDetails();
+                loadAdminReviews(); 
             }, 500);
         }
+
+        async function loadSupportTickets() {
+            try {
+                const q = query(collection(db, "support_tickets"));
+                const querySnapshot = await getDocs(q);
+                let tickets = [];
+                querySnapshot.forEach((doc) => {
+                    tickets.push({ id: doc.id, ...doc.data() });
+                });
+                
+                tickets.sort((a, b) => new Date(b.date) - new Date(a.date));
+                setSupportTickets(tickets);
+            } catch (error) { console.error("Error loading tickets:", error); }
+        }
+
+        async function loadAdminReviews() {
+            try {
+                const q = query(collection(db, "reviews"));
+                const querySnapshot = await getDocs(q);
+                let loadedReviews = [];
+                querySnapshot.forEach((doc) => {
+                    loadedReviews.push({ id: doc.id, ...doc.data() });
+                });
+                
+                loadedReviews.sort((a, b) => {
+                    const dateA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                    const dateB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                    return dateB - dateA;
+                });
+                
+                setAllReviews(loadedReviews);
+            } catch (error) {
+                console.error("Error loading reviews:", error);
+            }
+        }
+
+        window.deleteReview = async function(reviewId) {
+            if(confirm("Are you sure you want to delete this review? This cannot be undone.")) {
+                try {
+                    await deleteDoc(doc(db, "reviews", reviewId));
+                    window.showToast("Review deleted successfully.");
+                    loadAdminReviews(); 
+                } catch(e) {
+                    alert("Error deleting review: " + e.message);
+                }
+            }
+        };
 
         window.loadTribes = async function() {
             try {
@@ -198,9 +361,14 @@ export default function Admin() {
                 const res = await fetch(`${API_BASE_URL}/admin/settings/tribe_categories`, { headers });
                 const data = await res.json();
                 if (data.tribes) {
-                    setTribes(data.tribes);
+                    const mappedTribes = data.tribes.map(t => ({
+                        ...t,
+                        categories: t.categories ? t.categories.map(c => typeof c === 'string' ? { name: c, image: '' } : c) : [],
+                        banners: (t.banners && t.banners.length > 0) ? t.banners : [{ text: '', image: '' }] 
+                    }));
+                    setTribes(mappedTribes);
                 } else {
-                    setTribes([{ id: 1, name: 'Bodo', categories: ['Dokhona', 'Fasra', 'Blows', 'Jwmgra'] }]);
+                    setTribes([{ id: 1, name: 'CATEGORIES', categories: [], banners: [{ text: '', image: '' }] }]);
                 }
             } catch (error) { console.error("Error loading tribes:", error); }
         };
@@ -244,9 +412,9 @@ export default function Admin() {
                     globalSellers.push({ email, addedAt: dateAdded, profile: profileData });
 
                     htmlString += `
-                        <div class="card" style="padding: 20px; display:flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <div class="card" style="padding: 20px; display:flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                             <div style="display: flex; gap: 16px; align-items: center;">
-                                <div style="width: 50px; height: 50px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; overflow: hidden;">
+                                <div style="width: 50px; height: 50px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justifyContent: center; font-size: 20px; font-weight: bold; overflow: hidden;">
                                     ${profileData?.profilePhoto ? `<img src="${profileData.profilePhoto}" loading="lazy" style="width:100%; height:100%; object-fit:cover;" />` : brandName.charAt(0)}
                                 </div>
                                 <div>
@@ -364,7 +532,7 @@ export default function Admin() {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
                             <img src="${url}" alt="Preview" loading="lazy" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--input-border);">
-                            <button type="button" onclick="window.removeEditImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
+                            <button type="button" onclick="window.removeEditImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justifyContent:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `;
                 });
@@ -374,7 +542,7 @@ export default function Admin() {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
                             <img src="${objectUrl}" alt="Preview" loading="lazy" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid var(--success);">
-                            <button type="button" onclick="window.removeNewImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
+                            <button type="button" onclick="window.removeNewImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justifyContent:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `;
                 });
@@ -940,7 +1108,10 @@ export default function Admin() {
                 const data = await response.json();
                 globalOrders = data;
                 globalOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
-                renderOrdersList(globalOrders);
+                
+                // Initialize react state for admin orders mapping
+                window.renderReactOrders(globalOrders);
+
             } catch (error) {
                 console.error("Error loading orders:", error);
                 document.getElementById('admin-orders-list').innerHTML = `<p style="padding: 20px; color: var(--danger); font-weight: bold;">Failed to load orders.</p>`;
@@ -960,6 +1131,30 @@ export default function Admin() {
                     window.showToast("Order Status Updated");
                 } catch(e) {
                     alert("Error updating order: " + e.message);
+                }
+            }
+        };
+
+        window.verifyManualPayment = async function(orderId, isCOD) {
+            let paymentId = isCOD ? 'COD' : document.getElementById(`manual-pay-id-${orderId}`).value.trim();
+            
+            if (!isCOD && !paymentId) {
+                alert("Please enter the Razorpay Payment ID to verify this online order.");
+                return;
+            }
+
+            if(confirm("Are you sure you want to verify this payment and mark the order as PAID?")) {
+                try {
+                    const headers = await getAuthHeaders();
+                    await fetch(`${API_BASE_URL}/admin/orders/${orderId}`, {
+                        method: "PUT",
+                        headers: headers,
+                        body: JSON.stringify({ status: 'paid', payment_id: paymentId })
+                    });
+                    loadAdminOrders();
+                    window.showToast("Payment Verified successfully!");
+                } catch(e) {
+                    alert("Error verifying payment: " + e.message);
                 }
             }
         };
@@ -1046,23 +1241,6 @@ export default function Admin() {
             }
         };
 
-        window.filterOrders = function(status, btn) {
-            const buttons = btn.parentElement.querySelectorAll('.filter-btn');
-            buttons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-
-            if (status === 'all') {
-                renderOrdersList(globalOrders);
-            } else {
-                const filtered = globalOrders.filter(order => {
-                    const currentStatus = order.status ? order.status.toLowerCase() : 'pending';
-                    if (status === 'pending') return currentStatus === 'pending' || currentStatus === 'created';
-                    return currentStatus === status;
-                });
-                renderOrdersList(filtered);
-            }
-        };
-
         window.copyAddress = function(name, phone, add1, landmark, district, state, pin) {
             const formattedAddress = `${name}\nPhone: ${phone}\n${add1}\n${landmark ? landmark + '\n' : ''}${district}, ${state} - ${pin}`;
             navigator.clipboard.writeText(formattedAddress).then(() => {
@@ -1070,269 +1248,6 @@ export default function Admin() {
             }).catch(err => {
                 console.error("Failed to copy text: ", err);
             });
-        };
-
-        function renderOrdersList(ordersToRender) {
-            const ordersList = document.getElementById('admin-orders-list');
-            if(!ordersList) return;
-            
-            if(ordersToRender.length === 0) {
-                ordersList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No orders found matching your search.</p>';
-                return;
-            }
-
-            let htmlString = '';
-
-            ordersToRender.forEach(order => {
-                const currentStatus = order.status ? order.status.toLowerCase() : 'pending';
-                
-                let statusBadge = '';
-                if (currentStatus === 'paid') {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check"></i> PAID</span>';
-                } else if (currentStatus === 'shipped') {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--primary);"><i class="fa-solid fa-plane"></i> SHIPPED</span>';
-                } else if (currentStatus === 'cancelled') {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-xmark"></i> CANCELLED</span>';
-                } else {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-hourglass-half"></i> PENDING</span>';
-                }
-
-                // 🔥 NEW PIPELINE: Prominent Seller Acceptance Badge (next to Order ID)
-                const sellerAcceptedBadge = order.seller_accepted 
-                    ? `<span style="background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; margin-left: 12px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-store"></i> SELLER ACCEPTED</span>`
-                    : `<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; margin-left: 12px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-clock"></i> WAITING FOR SELLER</span>`;
-
-                const customerName = order.shippingAddress?.name || 'Guest Customer';
-                const customerEmail = order.email || 'No Email';
-                const customerPhone = order.shippingAddress?.phone || order.customerContact || 'No Phone';
-
-                let redBoxHtml = '<div style="color: var(--text-muted);">No address provided</div>';
-                if (order.shippingAddress) {
-                    const safeName = (order.shippingAddress.name || '').replace(/'/g, "\\'");
-                    const safeAdd = (order.shippingAddress.address1 || '').replace(/'/g, "\\'");
-                    const safeLand = (order.shippingAddress.landmark || '').replace(/'/g, "\\'");
-                    
-                    redBoxHtml = `
-                        <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
-                            <i class="fa-solid fa-location-dot" style="color: #ef4444;"></i> Delivery Address
-                        </strong>
-                        <div style="color: var(--text-main); line-height: 1.5;">
-                            ${order.shippingAddress.address1}${order.shippingAddress.landmark ? `, ${order.shippingAddress.landmark}` : ''}<br>
-                            ${order.shippingAddress.district}, ${order.shippingAddress.state} - <strong style="color: var(--primary);">${order.shippingAddress.pincode}</strong>
-                        </div>
-                        <button type="button" class="action-btn" style="margin-top: 12px; background: white; border: 1px solid #d1d5db; padding: 4px 8px; font-size:11px;" 
-                                onclick="window.copyAddress('${safeName}', '${customerPhone}', '${safeAdd}', '${safeLand}', '${order.shippingAddress.district}', '${order.shippingAddress.state}', '${order.shippingAddress.pincode}')">
-                            <i class="fa-regular fa-copy"></i> Copy Address
-                        </button>
-                    `;
-                }
-
-                let sellerName = 'N/A', brandName = 'N/A', sellerPhone = 'N/A', sellerEmail = 'N/A', sellerAddress = 'N/A', pickupAddress = 'N/A', city = '', state = '', pincode = '';
-                if (order.items && order.items.length > 0) {
-                    const firstItem = order.items[0];
-                    const liveProduct = globalLiveProducts.find(p => p.docId === firstItem.id || p.item_id === firstItem.item_id || p.title === firstItem.title);
-                    const source = liveProduct || firstItem; 
-                    
-                    sellerName = source.sellerName || 'N/A';
-                    brandName = source.brandName || 'N/A';
-                    sellerPhone = source.sellerPhone || 'N/A';
-                    sellerEmail = source.sellerEmail || 'N/A';
-                    sellerAddress = source.sellerAddress || 'N/A';
-                    pickupAddress = source.pickupAddress || 'N/A';
-                    city = source.city || '';
-                    state = source.state || '';
-                    pincode = source.pincode || '';
-                }
-
-                const locationStr = city ? `${city}, ${state} - ${pincode}` : '';
-                const isSellerAccepted = order.seller_accepted ? '<span style="color:var(--success); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-check-double"></i> Confirmed</span>' : '<span style="color:var(--accent); font-size: 11px; font-weight: bold; margin-left: 8px;"><i class="fa-solid fa-clock"></i> Unconfirmed</span>';
-
-                const blackBoxHtml = `
-                    <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
-                        <i class="fa-solid fa-store" style="color: #4b5563;"></i> Seller Details
-                    </strong>
-                    <div style="color: var(--text-main); line-height: 1.5;">
-                        <strong>Brand:</strong> ${brandName}<br>
-                        <strong>Seller:</strong> ${sellerName} <br>
-                        <a href="tel:${sellerPhone}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-phone"></i> ${sellerPhone}</a>
-                    </div>
-                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; color: var(--text-muted); line-height: 1.4;">
-                        <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">Pickup Location</span> ${isSellerAccepted}<br>
-                        ${pickupAddress}<br>
-                        ${locationStr}
-                    </div>
-                `;
-
-                let blueBoxHtml = '<div style="color: var(--text-muted);">No items data</div>';
-                if (order.items && order.items.length > 0) {
-                    blueBoxHtml = `
-                        <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
-                            <i class="fa-solid fa-box-open" style="color: #3b82f6;"></i> Order Items
-                        </strong>
-                        <div style="max-height: 150px; overflow-y: auto; padding-right: 5px;">
-                    ` + order.items.map(i => `
-                        <div style="display: flex; align-items: flex-start; gap: 14px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee;">
-                            <img src="${i.image || 'https://via.placeholder.com/80x100'}" loading="lazy" style="width: 50px; height: 60px; min-width: 50px; object-fit: cover; border-radius: 4px; border: 1px solid var(--input-border); box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                            <div style="line-height: 1.4; font-size:13px; padding-top: 2px;">
-                                <strong style="font-size: 13px;">${i.quantity}x</strong> ${i.title} <br>
-                                <span style="color: var(--text-muted);">Size: ${i.size || 'N/A'}</span><br>
-                                <span style="font-weight: 600; color: var(--primary);">₹${i.price || i.selling_price || ''}</span>
-                            </div>
-                        </div>
-                    `).join('') + `</div>`;
-                }
-
-                let adminActions = '';
-                if (currentStatus === 'pending' || currentStatus === 'created') {
-                    adminActions = `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px;">
-                            <button type="button" class="action-btn btn-status-active" onclick="window.updateOrderStatus('${order.id}', 'paid')">
-                                <i class="fa-solid fa-check-double"></i> Verify Payment
-                            </button>
-                            <button type="button" class="action-btn btn-delete" onclick="window.updateOrderStatus('${order.id}', 'cancelled')">
-                                <i class="fa-solid fa-xmark"></i> Reject
-                            </button>
-                        </div>`;
-                } else if (currentStatus === 'paid') {
-                    adminActions = `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
-                            <button type="button" class="action-btn btn-edit" style="width: 100%;" onclick="window.updateOrderStatus('${order.id}', 'shipped')">
-                                <i class="fa-solid fa-truck-fast"></i> Mark as Shipped
-                            </button>
-                        </div>`;
-                }
-
-                const pMethod = order.payment_method || order.paymentMethod;
-                const isCOD = pMethod && pMethod.toUpperCase() === 'COD';
-                const paymentTypeBadge = isCOD 
-                    ? `<span style="background: #fef3c7; color: #b45309; border: 1px solid #fde68a; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 6px;"><i class="fa-solid fa-money-bill-wave"></i> CASH ON DELIVERY</span>`
-                    : `<span style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 6px;"><i class="fa-solid fa-credit-card"></i> ONLINE PREPAID</span>`;
-
-                const existingCourier = order.courierName || '';
-                const existingTracking = order.trackingId || '';
-                const existingLabel = order.shipping_label_url || order.shippingLabel || '';
-
-                const labelHtml = existingLabel 
-                    ? `<div style="display: flex; align-items: center; gap: 8px; border-left: 1px solid #e5e7eb; padding-left: 16px;">
-                         <a href="${existingLabel}" target="_blank" rel="noopener noreferrer" style="padding: 8px 12px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
-                            <i class="fa-solid fa-file-pdf"></i> View Label
-                         </a>
-                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="file" id="pdf-file-${order.id}" accept=".pdf" style="font-size: 11px; max-width: 170px;">
-                            <button type="button" id="upload-pdf-btn-${order.id}" class="action-btn" onclick="window.handleLabelUpload('${order.id}')" style="padding: 6px 10px; background: #f3f4f6; border: 1px solid #d1d5db; font-size: 11px; color: var(--text-main);">
-                                Replace PDF
-                            </button>
-                         </div>
-                       </div>`
-                    : `<div style="display: flex; align-items: center; gap: 8px; border-left: 1px solid #e5e7eb; padding-left: 16px;">
-                         <input type="file" id="pdf-file-${order.id}" accept=".pdf" style="font-size: 12px; max-width: 200px;">
-                         <button type="button" id="upload-pdf-btn-${order.id}" class="action-btn" onclick="window.handleLabelUpload('${order.id}')" style="padding: 8px 12px; background: #f3f4f6; border: 1px solid #d1d5db; font-size: 12px; color: var(--text-main);">
-                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload Label
-                         </button>
-                       </div>`;
-
-                const trackingHtml = `
-                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                        <input type="text" id="courier-name-${order.id}" value="${existingCourier}" placeholder="Courier Name" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 120px;">
-                        <input type="text" id="tracking-id-${order.id}" value="${existingTracking}" placeholder="Tracking ID" class="input-box" style="padding: 8px 12px; flex: 1; min-width: 120px;">
-                        
-                        <button type="button" id="track-btn-${order.id}" class="action-btn" onclick="window.updateTrackingInfo('${order.id}')" style="padding: 9px 16px; background: var(--primary); color: white; border: none; font-weight: 600;">
-                            Save Tracking
-                        </button>
-                        
-                        ${labelHtml}
-                    </div>
-                `;
-
-                htmlString += `
-                    <div class="card" style="padding: 24px; margin-bottom: 20px;">
-                        
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 16px;">
-                            <div>
-                                
-                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap;">
-                                    Order Ref: <strong style="color: var(--primary); font-size: 14px; margin-left: 4px;">${order.jamba_order_id || order.razorpay_order_id || order.id}</strong>
-                                    ${sellerAcceptedBadge}
-                                </div>
-                                
-                                <div style="font-size: 13px; font-weight: 500; color: var(--primary); border: 1px solid #e5e7eb; background: #f9fafb; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                    <span><i class="fa-solid fa-user" style="color: var(--text-muted);"></i> ${customerName}</span>
-                                    <span style="color: #d1d5db;">|</span>
-                                    <span><i class="fa-solid fa-envelope" style="color: var(--text-muted);"></i> ${customerEmail}</span>
-                                    <span style="color: #d1d5db;">|</span>
-                                    <span><i class="fa-solid fa-phone" style="color: var(--text-muted);"></i> ${customerPhone}</span>
-                                </div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
-                                <div style="margin-top: 6px;">${statusBadge}</div>
-                            </div>
-                        </div>
-                        
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 20px;">
-                            
-                            <div style="border: 1px solid #e5e7eb; border-top: 3px solid #ef4444; padding: 16px; border-radius: 6px; font-size: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-                                ${redBoxHtml}
-                            </div>
-
-                            <div style="border: 1px solid #e5e7eb; border-top: 3px solid #4b5563; padding: 16px; border-radius: 6px; font-size: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-                                ${blackBoxHtml}
-                            </div>
-
-                            <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; font-size: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-                                ${blueBoxHtml}
-                            </div>
-
-                        </div>
-
-                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 20px; display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid #f3f4f6; flex-wrap: wrap; gap: 10px;">
-                            <div>
-                                <span style="display: block; margin-bottom: 4px;">Date: ${new Date(order.created_at || order.createdAt).toLocaleString()}</span>
-                                <span>Payment ID: ${order.payment_id || order.razorpay_id || 'N/A'}</span>
-                            </div>
-                            <div>
-                                ${paymentTypeBadge}
-                            </div>
-                        </div>
-                        ${trackingHtml}
-                        ${adminActions}
-                    </div>`;
-            });
-
-            ordersList.innerHTML = htmlString; 
-        }
-
-        window.handleOrderSearch = function(searchTerm) {
-            const lowerTerm = searchTerm.toLowerCase();
-            
-            const activeTabBtn = document.querySelector('#orders .filter-btn.active');
-            let currentStatusFilter = 'all';
-            
-            if (activeTabBtn) {
-                if (activeTabBtn.innerText.includes('Needs Verification')) currentStatusFilter = 'pending';
-                else if (activeTabBtn.innerText.includes('Ready to Ship')) currentStatusFilter = 'paid';
-                else if (activeTabBtn.innerText.includes('Shipped')) currentStatusFilter = 'shipped';
-            }
-
-            const filteredOrders = globalOrders.filter(order => {
-                const jambaId = (order.jamba_order_id || "").toLowerCase();
-                const orderId = (order.razorpay_order_id || order.id || "").toLowerCase();
-                const contactInfo = (order.email || order.customerContact || "").toLowerCase();
-                const orderStatus = order.status ? order.status.toLowerCase() : 'pending';
-                
-                let addressString = "";
-                if (order.shippingAddress) {
-                    addressString = `${order.shippingAddress.name} ${order.shippingAddress.phone} ${order.shippingAddress.district} ${order.shippingAddress.state}`.toLowerCase();
-                }
-                
-                const matchesSearch = jambaId.includes(lowerTerm) || orderId.includes(lowerTerm) || contactInfo.includes(lowerTerm) || addressString.includes(lowerTerm);
-                
-                if (currentStatusFilter === 'all') return matchesSearch;
-                if (currentStatusFilter === 'pending') return matchesSearch && (orderStatus === 'pending' || orderStatus === 'created');
-                return matchesSearch && orderStatus === currentStatusFilter;
-            });
-            
-            renderOrdersList(filteredOrders);
         };
 
         async function loadCustomerDetails() {
@@ -1421,6 +1336,22 @@ export default function Admin() {
             renderCustomerList(filteredCustomers);
         };
 
+        const handleClickOutside = (event) => {
+            if (!event.target.closest('.header-profile-container')) {
+                setIsProfileMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+
+    }, []);
+
+    // 🔥 REACT STATE INTEGRATION FOR ADMIN ORDERS
+    const [reactOrders, setReactOrders] = useState([]);
+    useEffect(() => {
+        window.renderReactOrders = (orders) => {
+            setReactOrders(orders);
+        };
     }, []);
 
     const handleAdminSaveSellerProfile = async (e) => {
@@ -1483,6 +1414,100 @@ export default function Admin() {
         }
     };
 
+    const handleSendBroadcast = async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('broadcast-btn');
+        btn.disabled = true;
+        btn.innerText = "Sending...";
+
+        const targetEmail = document.getElementById('broadcast-target').value;
+        const subject = document.getElementById('broadcast-subject').value;
+        const message = document.getElementById('broadcast-message').value;
+
+        try {
+            const newTicketData = {
+                sellerName: targetEmail === 'all' ? 'All Sellers' : globalSellers.find(s => s.email === targetEmail)?.profile?.brandName || targetEmail,
+                email: targetEmail,
+                subject: subject,
+                status: 'open',
+                date: new Date().toISOString(),
+                messages: [{ sender: 'admin', text: message, time: new Date().toISOString() }]
+            };
+            
+            const docRef = await addDoc(collection(db, "support_tickets"), newTicketData);
+            setSupportTickets([{ id: docRef.id, ...newTicketData }, ...supportTickets]);
+            window.showToast("Message Sent Successfully!");
+            document.getElementById('broadcast-form').reset();
+            setMessageTab('inbox');
+        } catch (error) {
+            alert("Error sending message: " + error.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = "Send Message";
+        }
+    };
+
+    const handleReplyTicket = async (e) => {
+        e.preventDefault();
+        const replyText = document.getElementById('ticket-reply-text').value;
+        if (!replyText.trim()) return;
+
+        try {
+            const updatedMessages = [...activeTicket.messages, { sender: 'admin', text: replyText, time: new Date().toISOString() }];
+            const ticketRef = doc(db, "support_tickets", activeTicket.id);
+            await updateDoc(ticketRef, { messages: updatedMessages, status: 'open' });
+            const updatedTicket = { ...activeTicket, messages: updatedMessages, status: 'open' };
+            
+            setActiveTicket(updatedTicket);
+            setSupportTickets(supportTickets.map(t => t.id === updatedTicket.id ? updatedTicket : t));
+            document.getElementById('ticket-reply-text').value = '';
+            
+        } catch(error) {
+            console.error(error);
+            alert("Error replying to ticket: " + error.message);
+        }
+    };
+
+    const markTicketResolved = async () => {
+        try {
+            const ticketRef = doc(db, "support_tickets", activeTicket.id);
+            await updateDoc(ticketRef, { status: 'resolved' });
+            const updatedTicket = { ...activeTicket, status: 'resolved' };
+            setActiveTicket(updatedTicket);
+            setSupportTickets(supportTickets.map(t => t.id === updatedTicket.id ? updatedTicket : t));
+            window.showToast("Ticket marked as resolved.");
+        } catch(error) {
+            alert("Error resolving ticket: " + error.message);
+        }
+    };
+
+    // 🔥 FILTRATION LOGIC FOR ORDERS
+    const filteredAdminOrders = reactOrders.filter(order => {
+        // Text Search
+        const searchLower = (document.getElementById('order-search')?.value || "").toLowerCase();
+        const jambaId = (order.jamba_order_id || "").toLowerCase();
+        const orderId = (order.razorpay_order_id || order.id || "").toLowerCase();
+        const contactInfo = (order.email || order.customerContact || "").toLowerCase();
+        let addressString = "";
+        if (order.shippingAddress) {
+            addressString = `${order.shippingAddress.name} ${order.shippingAddress.phone} ${order.shippingAddress.district} ${order.shippingAddress.state}`.toLowerCase();
+        }
+        
+        const matchesSearch = jambaId.includes(searchLower) || orderId.includes(searchLower) || contactInfo.includes(searchLower) || addressString.includes(searchLower);
+
+        // Status Filter
+        let matchesStatus = true;
+        const currentStatus = order.status ? order.status.toLowerCase() : 'pending';
+        if (orderFilterStatus !== 'all') {
+            if (orderFilterStatus === 'pending') matchesStatus = (currentStatus === 'pending' || currentStatus === 'created');
+            else if (orderFilterStatus === 'paid') matchesStatus = (currentStatus === 'paid' || currentStatus === 'processing');
+            else if (orderFilterStatus === 'shipped') matchesStatus = (currentStatus === 'shipped' || currentStatus === 'out_for_delivery' || currentStatus === 'delivered');
+            else matchesStatus = (currentStatus === orderFilterStatus);
+        }
+
+        return matchesSearch && matchesStatus;
+    });
+
     return (
         <div className="admin-isolated-wrapper">
             <div id="toast-notification" className="toast-notification"></div>
@@ -1499,34 +1524,57 @@ export default function Admin() {
                 </div>
             </div>
 
-            <nav className="sidebar">
-                <div className="logo-container">
-                    <span className="logo-text"><span className="logo-jamba">JAMBA</span>WEAR</span>
+            {/* 🔥 NEW UNIFIED HEADER 🔥 */}
+            <header className="admin-top-header">
+                <div className="logo-block">
+                    <div className="logo-jamba">JAMBA</div>
+                    <div className="logo-sub">ADMIN DASHBOARD</div>
                 </div>
+
+                <div className="header-profile-container">
+                    <div className="header-profile-trigger" onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}>
+                        <div className="header-avatar-placeholder">A</div>
+                        <div className="header-brand-details">
+                            <span className="header-brand-label">System Admin</span>
+                            <span className="header-brand-name">Master Control</span>
+                        </div>
+                        <i className={`fa-solid fa-chevron-${isProfileMenuOpen ? 'up' : 'down'} header-chevron`}></i>
+                    </div>
+
+                    {isProfileMenuOpen && (
+                        <div className="header-profile-dropdown">
+                            <div className="dropdown-menu-item text-danger" onClick={() => window.handleLogout()}>
+                                <i className="fa-solid fa-arrow-right-from-bracket"></i> Secure Logout
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </header>
+
+            {/* 🔥 NEW TAB BAR 🔥 */}
+            <nav className="admin-tab-bar">
                 <ul className="nav-menu">
                     <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> Inventory</li>
                     <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Add Product</li>
-                    
-                    <li className={`nav-item ${activeTab === 'tribe-settings' ? 'active' : ''}`} onClick={() => window.showSection('tribe-settings')}><i className="fa-solid fa-sitemap"></i> Tribe Settings</li>
-                    
+                    <li className={`nav-item ${activeTab === 'tribe-settings' ? 'active' : ''}`} onClick={() => window.showSection('tribe-settings')}><i className="fa-solid fa-sitemap"></i> Categories</li>
                     <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> Orders</li>
-                    
                     <li className={`nav-item ${activeTab === 'seller-access' ? 'active' : ''}`} onClick={() => window.showSection('seller-access')}>
-                        <i className="fa-solid fa-store"></i> Seller Directory
+                        <i className="fa-solid fa-store"></i> Sellers
                         {globalPendingPayouts > 0 && <span className="sidebar-badge">{globalPendingPayouts}</span>}
                     </li>
-
-                    <li className={`nav-item ${activeTab === 'site-settings' ? 'active' : ''}`} onClick={() => window.showSection('site-settings')}><i className="fa-solid fa-sliders"></i> Site Settings</li>
+                    <li className={`nav-item ${activeTab === 'messages' ? 'active' : ''}`} onClick={() => window.showSection('messages')}>
+                        <i className="fa-solid fa-envelope"></i> Inbox
+                        {supportTickets.filter(t => t.status === 'open').length > 0 && <span className="sidebar-badge">{supportTickets.filter(t => t.status === 'open').length}</span>}
+                    </li>
+                    <li className={`nav-item ${activeTab === 'site-settings' ? 'active' : ''}`} onClick={() => window.showSection('site-settings')}><i className="fa-solid fa-sliders"></i> Site Setup</li>
                     <li className={`nav-item ${activeTab === 'customer-details' ? 'active' : ''}`} onClick={() => window.showSection('customer-details')}><i className="fa-solid fa-user-group"></i> Customers</li>
+                    <li className={`nav-item ${activeTab === 'store-reviews' ? 'active' : ''}`} onClick={() => window.showSection('store-reviews')}><i className="fa-solid fa-star"></i> Reviews</li>
                 </ul>
             </nav>
 
             <div className="main-pannel">
-                <div className="header">
-                    <h1>Dashboard</h1>
-                    <button type="button" className="btn-login" onClick={() => window.handleLogout()}>Logout Admin</button>
-                </div>
 
+                {/* INVENTORY TAB */}
                 <div id="live-products" className={`content-section ${activeTab === 'live-products' ? 'active' : ''}`}>
                     <div style={{ marginBottom: '24px', borderBottom: '1px solid var(--input-border)', paddingBottom: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1552,6 +1600,7 @@ export default function Admin() {
                     </div>
                 </div>
 
+                {/* ADD PRODUCT TAB */}
                 <div id="add-product" className={`content-section ${activeTab === 'add-product' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Catalogue Management</span>
                     
@@ -1707,118 +1756,334 @@ export default function Admin() {
                     </form>
                 </div>
 
+                {/* CATEGORY SETTING TAB */}
                 <div id="tribe-settings" className={`content-section ${activeTab === 'tribe-settings' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                        <span className="section-title">Collection Manager (Tribe Filters)</span>
+                        <span className="section-title">Category Setting</span>
                         <button id="save-tribes-btn" className="btn-submit" style={{ width: 'auto', marginTop: 0, padding: '10px 24px' }} onClick={handleSaveTribes}>
                             Save Changes
                         </button>
                     </div>
 
-                    <div className="card">
-                        {tribes.map((tribe, tIndex) => (
-                            <div key={tribe.id} style={{ marginBottom: '30px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                                        <span style={{ fontSize: '18px', fontWeight: '600', marginRight: '12px', color: 'var(--primary)' }}>
-                                            {tIndex + 1}.
-                                        </span>
-                                        <input
-                                            type="text"
-                                            className="input-box"
-                                            style={{ width: '250px', fontSize: '16px', fontWeight: '600', padding: '8px 14px' }}
-                                            value={tribe.name}
-                                            onChange={(e) => handleTribeNameChange(tribe.id, e.target.value)}
-                                            placeholder="Tribe Name (e.g. Bodo)"
-                                        />
-                                    </div>
-                                    <button 
-                                        type="button" 
-                                        className="action-btn btn-delete" 
-                                        style={{ padding: '8px 12px' }} 
-                                        onClick={() => handleRemoveTribe(tribe.id)}
-                                        title="Delete entire Tribe"
-                                    >
-                                        <i className="fa-solid fa-trash"></i>
-                                    </button>
+                    {tribes.map((tribe) => {
+                        const currentIdx = activeBanners[tribe.id] || 0;
+                        const banners = (tribe.banners && tribe.banners.length > 0) ? tribe.banners : [{ text: '', image: '' }];
+                        const currentBanner = banners[currentIdx] || { text: '', image: '' };
+
+                        return (
+                            <div key={tribe.id} style={{ marginBottom: '40px' }}>
+                                
+                                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                                    <input
+                                        type="text"
+                                        style={{ fontSize: '24px', fontWeight: '500', textTransform: 'uppercase', border: 'none', background: 'transparent', color: '#111', outline: 'none', width: '100%', letterSpacing: '0.02em' }}
+                                        value={`${tribe.name}`}
+                                        onChange={(e) => handleTribeNameChange(tribe.id, e.target.value)}
+                                        placeholder="e.g. MEN CATEGORIES"
+                                    />
+                                    <button type="button" className="action-btn btn-delete" onClick={() => handleRemoveTribe(tribe.id)} title="Delete Category Group"><i className="fa-solid fa-trash"></i></button>
                                 </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', paddingLeft: '28px' }}>
+
+                                <div style={{ backgroundColor: '#a7d7b5', borderRadius: '16px', padding: '20px 24px', marginBottom: '20px', display: 'flex', gap: '20px', overflowX: 'auto', scrollbarWidth: 'none' }}>
                                     {tribe.categories.map((cat, cIndex) => (
-                                        <div key={cIndex} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-light)', border: '1px solid var(--input-border)', borderRadius: '6px', overflow: 'hidden' }}>
+                                        <div key={cIndex} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', flex: '0 0 auto', position: 'relative' }}>
+                                            <button type="button" onClick={() => handleRemoveCategory(tribe.id, cIndex)} style={{ position: 'absolute', top: '-8px', right: '-8px', background: 'var(--danger)', color: 'white', border: 'none', borderRadius: '50%', width: '20px', height: '20px', cursor: 'pointer', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <i className="fa-solid fa-xmark" style={{fontSize: '10px'}}></i>
+                                            </button>
+
+                                            <label 
+                                                style={{ 
+                                                    width: '110px', height: '110px', 
+                                                    backgroundColor: cat.image ? '#fff' : '#e5e7eb', 
+                                                    border: '1px solid #9ca3af', borderRadius: '12px', 
+                                                    padding: cat.image ? '0' : '8px', 
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                    textAlign: 'center', cursor: 'pointer', transition: '0.2s', overflow: 'hidden' 
+                                                }} 
+                                                onMouseOver={(e) => e.currentTarget.style.borderColor = '#111'} 
+                                                onMouseOut={(e) => e.currentTarget.style.borderColor = '#9ca3af'} 
+                                                title="Click to upload category image"
+                                            >
+                                                {cat.image ? (
+                                                    <img src={cat.image} alt={cat.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                ) : (
+                                                    <span style={{ fontSize: '10px', color: '#6b7280', lineHeight: '1.2', fontWeight: '600', textTransform: 'uppercase' }}>
+                                                        <i className="fa-solid fa-cloud-arrow-up" style={{fontSize: '18px', marginBottom: '4px'}}></i><br/>Upload<br/>Image
+                                                    </span>
+                                                )}
+                                                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleCategoryImgUpload(tribe.id, cIndex, e)} />
+                                            </label>
+
                                             <input
                                                 type="text"
-                                                style={{ width: '140px', border: 'none', padding: '8px 12px', outline: 'none', background: 'transparent', fontSize: '14px', color: 'var(--primary)' }}
-                                                value={cat}
-                                                onChange={(e) => handleCategoryChange(tribe.id, cIndex, e.target.value)}
-                                                placeholder="Input"
+                                                style={{ width: '100px', border: 'none', background: 'transparent', textAlign: 'center', fontSize: '14px', fontWeight: '500', color: '#111', outline: 'none', borderBottom: '1px dashed transparent', transition: '0.2s' }}
+                                                onFocus={(e) => e.target.style.borderBottomColor = '#111'}
+                                                onBlur={(e) => e.target.style.borderBottomColor = 'transparent'}
+                                                value={cat.name}
+                                                onChange={(e) => handleCategoryNameChange(tribe.id, cIndex, e.target.value)}
+                                                placeholder="Name"
                                             />
-                                            <button
-                                                type="button"
-                                                onClick={() => handleRemoveCategory(tribe.id, cIndex)}
-                                                style={{ background: 'none', border: 'none', borderLeft: '1px solid var(--input-border)', padding: '8px 10px', color: 'var(--danger)', cursor: 'pointer', transition: 'background 0.2s' }}
-                                                onMouseOver={(e) => e.currentTarget.style.background = '#fee2e2'}
-                                                onMouseOut={(e) => e.currentTarget.style.background = 'none'}
-                                                title="Remove Category"
-                                            >
-                                                <i className="fa-solid fa-xmark"></i>
-                                            </button>
                                         </div>
                                     ))}
-                                    <button
-                                        type="button"
-                                        className="action-btn"
-                                        style={{ width: '38px', height: '38px', padding: '0', borderRadius: '6px', background: '#fff', border: '1px dashed #9ca3af' }}
-                                        onClick={() => handleAddCategory(tribe.id)}
-                                        title="Add new category"
-                                    >
-                                        <i className="fa-solid fa-plus" style={{ color: 'var(--text-muted)' }}></i>
-                                    </button>
+                                    
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', flex: '0 0 auto' }}>
+                                        <div onClick={() => handleAddCategory(tribe.id)} style={{ width: '110px', height: '110px', backgroundColor: '#a7d7b5', border: '1.5px solid #111', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: '0.2s' }} onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#9bcba9'} onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#a7d7b5'}>
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', border: '2px solid #111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <i className="fa-solid fa-plus" style={{ fontSize: '20px', color: '#111' }}></i>
+                                            </div>
+                                        </div>
+                                        <span style={{ fontSize: '14px', fontWeight: '500', color: '#111' }}>Type</span>
+                                    </div>
                                 </div>
-                                <hr style={{ border: '0', borderTop: '1px solid var(--input-border)', margin: '24px 0 0 0' }} />
-                            </div>
-                        ))}
 
-                        <div style={{ textAlign: 'center', marginTop: '20px' }}>
-                            <button 
-                                type="button" 
-                                className="action-btn" 
-                                style={{ background: 'var(--bg-light)', border: '1px solid var(--input-border)', padding: '10px 24px', fontWeight: '600', fontSize: '14px' }} 
-                                onClick={handleAddTribe}
-                            >
-                                + Add New Tribe
-                            </button>
-                        </div>
+                                <div style={{ 
+                                    backgroundColor: currentBanner.image ? 'transparent' : '#a7d7b5', 
+                                    backgroundImage: currentBanner.image ? `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${currentBanner.image})` : 'none',
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center',
+                                    borderRadius: '16px', 
+                                    padding: '40px 60px', 
+                                    position: 'relative', 
+                                    display: 'flex', 
+                                    flexDirection: 'column', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    textAlign: 'center', 
+                                    minHeight: '220px',
+                                    transition: '0.3s'
+                                }}>
+                                    <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+                                        <span style={{color: currentBanner.image ? '#fff' : '#111', fontSize: '12px', fontWeight: 'bold', marginRight: '8px'}}>Slide {currentIdx + 1}/{banners.length}</span>
+                                        
+                                        <i className="fa-solid fa-plus" style={{ fontSize: '20px', cursor: 'pointer', color: currentBanner.image ? '#fff' : '#111' }} title="Add New Slide" onClick={() => addBannerSlide(tribe.id)}></i>
+                                        
+                                        <label style={{ cursor: 'pointer', margin: 0, display: 'flex' }} title="Upload Banner Image">
+                                            <i className="fa-solid fa-images" style={{ fontSize: '20px', color: currentBanner.image ? '#fff' : '#111' }}></i>
+                                            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleBannerImageUpload(tribe.id, currentIdx, e)} />
+                                        </label>
+                                        
+                                        <i className="fa-solid fa-trash-can" style={{ fontSize: '20px', cursor: 'pointer', color: currentBanner.image ? '#ff4d4d' : '#dc2626' }} title="Delete Slide" onClick={() => removeBannerSlide(tribe.id, currentIdx)}></i>
+                                    </div>
+
+                                    <i className="fa-solid fa-chevron-left" 
+                                       onClick={() => setActiveBanners(prev => ({...prev, [tribe.id]: currentIdx === 0 ? banners.length - 1 : currentIdx - 1}))}
+                                       style={{ position: 'absolute', left: '20px', top: '50%', transform: 'translateY(-50%)', fontSize: '40px', cursor: 'pointer', color: currentBanner.image ? '#fff' : '#111' }}></i>
+                                    
+                                    <textarea 
+                                        style={{ 
+                                            width: '80%', background: 'transparent', border: '1px dashed transparent', 
+                                            fontSize: '14px', fontWeight: '600', color: currentBanner.image ? '#fff' : '#111', 
+                                            textAlign: 'center', resize: 'none', minHeight: '80px', textTransform: 'uppercase', 
+                                            outline: 'none', lineHeight: '1.6', transition: '0.2s' 
+                                        }}
+                                        onFocus={(e) => e.target.style.borderColor = currentBanner.image ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)'}
+                                        onBlur={(e) => e.target.style.borderColor = 'transparent'}
+                                        placeholder="Type your banner announcement here..."
+                                        value={currentBanner.text}
+                                        onChange={(e) => handleBannerTextChange(tribe.id, currentIdx, e.target.value)}
+                                    ></textarea>
+
+                                    <i className="fa-solid fa-chevron-right" 
+                                       onClick={() => setActiveBanners(prev => ({...prev, [tribe.id]: currentIdx === banners.length - 1 ? 0 : currentIdx + 1}))}
+                                       style={{ position: 'absolute', right: '20px', top: '50%', transform: 'translateY(-50%)', fontSize: '40px', cursor: 'pointer', color: currentBanner.image ? '#fff' : '#111' }}></i>
+
+                                    <div style={{ position: 'absolute', bottom: '20px', display: 'flex', gap: '8px', background: currentBanner.image ? 'rgba(0,0,0,0.5)' : '#e5e7eb', padding: '6px 12px', borderRadius: '20px', border: currentBanner.image ? '1px solid rgba(255,255,255,0.2)' : '1px solid #111' }}>
+                                        {banners.map((_, i) => (
+                                            <span 
+                                                key={i} 
+                                                onClick={() => setActiveBanners(prev => ({...prev, [tribe.id]: i}))}
+                                                style={{ 
+                                                    width: '12px', height: '12px', borderRadius: '50%', 
+                                                    background: i === currentIdx ? (currentBanner.image ? '#fff' : '#111') : 'transparent', 
+                                                    border: currentBanner.image ? '1px solid #fff' : '1px solid #111', 
+                                                    cursor: 'pointer' 
+                                                }}>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+
+                            </div>
+                        );
+                    })}
+                    
+                    <div style={{ textAlign: 'center', marginTop: '20px' }}>
+                        <button type="button" className="action-btn" style={{ background: 'var(--bg-light)', border: '1px solid var(--input-border)', padding: '10px 24px', fontWeight: '600', fontSize: '14px' }} onClick={handleAddTribe}>
+                            + Add New Category Group
+                        </button>
                     </div>
                 </div>
 
+                {/* ORDERS TAB */}
                 <div id="orders" className={`content-section ${activeTab === 'orders' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <span className="section-title">Order Processing</span>
-                        
-                        <div className="search-container">
+                    </div>
+
+                    <div className="orders-controls-bar">
+                        <div className="search-container" style={{ flex: '1', minWidth: '250px' }}>
                             <i className="fa-solid fa-search"></i>
-                            <input type="text" id="order-search" placeholder="Search Order ID, Email, Phone..." onInput={(event) => window.handleOrderSearch(event.currentTarget.value)} />
+                            <input 
+                                type="text" 
+                                id="order-search" 
+                                placeholder="Search Order ID, Email, Phone..." 
+                                onInput={(e) => {
+                                    document.getElementById('order-search').value = e.currentTarget.value;
+                                    setReactOrders([...globalOrders]); // trigger re-render
+                                }} 
+                            />
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
-                        <button type="button" className="filter-btn active" onClick={(event) => window.filterOrders('all', event.currentTarget)}>All Orders</button>
-                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('pending', event.currentTarget)}>
-                            <i className="fa-solid fa-circle-exclamation" style={{ color: 'var(--accent)' }}></i> Needs Verification
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+                        <button type="button" className={`filter-btn ${orderFilterStatus === 'all' ? 'active' : ''}`} onClick={() => setOrderFilterStatus('all')}>All Orders</button>
+                        <button type="button" className={`filter-btn ${orderFilterStatus === 'pending' ? 'active' : ''}`} onClick={() => setOrderFilterStatus('pending')}>
+                            <i className="fa-solid fa-circle-exclamation" style={{ color: orderFilterStatus === 'pending' ? 'white' : 'var(--accent)' }}></i> Needs Verification
                         </button>
-                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('paid', event.currentTarget)}>
-                            <i className="fa-solid fa-box" style={{ color: 'var(--success)' }}></i> Ready to Ship
+                        <button type="button" className={`filter-btn ${orderFilterStatus === 'paid' ? 'active' : ''}`} onClick={() => setOrderFilterStatus('paid')}>
+                            <i className="fa-solid fa-box" style={{ color: orderFilterStatus === 'paid' ? 'white' : 'var(--success)' }}></i> Ready to Ship
                         </button>
-                        <button type="button" className="filter-btn" onClick={(event) => window.filterOrders('shipped', event.currentTarget)}>
-                            <i className="fa-solid fa-plane" style={{ color: 'var(--primary)' }}></i> Shipped
+                        <button type="button" className={`filter-btn ${orderFilterStatus === 'shipped' ? 'active' : ''}`} onClick={() => setOrderFilterStatus('shipped')}>
+                            <i className="fa-solid fa-plane" style={{ color: orderFilterStatus === 'shipped' ? 'white' : 'var(--primary)' }}></i> Shipped
                         </button>
                     </div>
                     
                     <div id="admin-orders-list">
-                        <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading orders data...</p>
+                        {filteredAdminOrders.length === 0 ? (
+                            <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>No orders found matching your search.</p>
+                        ) : (
+                            filteredAdminOrders.map(order => {
+                                const currentStatus = order.status ? order.status.toLowerCase() : 'pending';
+                                const pMethod = order.payment_method || order.paymentMethod;
+                                const isCOD = pMethod && pMethod.toUpperCase() === 'COD';
+                                
+                                let statusClass = "status-pending";
+                                let statusLabel = "PENDING";
+                                if (currentStatus === 'paid') { statusClass = "status-paid"; statusLabel = "PAID"; }
+                                else if (currentStatus === 'processing') { statusClass = "status-processing"; statusLabel = "PROCESSING"; }
+                                else if (currentStatus === 'shipped') { statusClass = "status-shipped"; statusLabel = "SHIPPED"; }
+                                else if (currentStatus === 'out_for_delivery') { statusClass = "status-ofd"; statusLabel = "OUT FOR DELIVERY"; }
+                                else if (currentStatus === 'delivered') { statusClass = "status-delivered"; statusLabel = "DELIVERED"; }
+                                else if (currentStatus === 'cancelled') { statusClass = "status-cancelled"; statusLabel = "CANCELLED"; }
+
+                                const sellerAcceptedBadge = order.seller_accepted 
+                                    ? `<span style="background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-store"></i> SELLER ACCEPTED</span>`
+                                    : `<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-clock"></i> WAITING FOR SELLER</span>`;
+
+                                const customerName = order.shippingAddress?.name || 'Guest Customer';
+                                const customerPhone = order.shippingAddress?.phone || order.customerContact || 'No phone provided';
+                                const addressString = order.shippingAddress 
+                                    ? `${order.shippingAddress.address1}${order.shippingAddress.landmark ? `, ${order.shippingAddress.landmark}` : ''}, ${order.shippingAddress.district}, ${order.shippingAddress.state} - ${order.shippingAddress.pincode}` 
+                                    : 'No shipping address provided by customer';
+
+                                let sellerName = 'N/A', brandName = 'N/A', sellerPhone = 'N/A', pickupAddress = 'N/A', locationStr = '';
+                                if (order.items && order.items.length > 0) {
+                                    const firstItem = order.items[0];
+                                    const liveProduct = globalLiveProducts.find(p => p.docId === firstItem.id || p.item_id === firstItem.item_id || p.title === firstItem.title);
+                                    const source = liveProduct || firstItem; 
+                                    
+                                    sellerName = source.sellerName || 'N/A';
+                                    brandName = source.brandName || 'N/A';
+                                    sellerPhone = source.sellerPhone || 'N/A';
+                                    pickupAddress = source.pickupAddress || 'N/A';
+                                    locationStr = source.city ? `${source.city}, ${source.state} - ${source.pincode}` : '';
+                                }
+
+                                const existingCourier = order.courierName || '';
+                                const existingTracking = order.trackingId || '';
+                                const existingLabel = order.shipping_label_url || order.shippingLabel || '';
+
+                                return (
+                                    <div key={order.id} className="moc-card">
+                                        <div className="moc-header">
+                                            <div className="moc-header-left">
+                                                <div className="moc-ref">Order Ref: <strong>{order.jamba_order_id || order.id}</strong></div>
+                                                <div className="moc-date" dangerouslySetInnerHTML={{__html: sellerAcceptedBadge}}></div>
+                                            </div>
+                                            <div className="moc-header-right" style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'4px'}}>
+                                                <div className="moc-date">{new Date(order.created_at || order.createdAt).toLocaleString([], {day:'numeric', month:'short', year:'numeric'})}</div>
+                                                {isCOD ? <span className="moc-payment-badge cod">COD</span> : <span className="moc-payment-badge prepaid">PREPAID</span>}
+                                            </div>
+                                        </div>
+
+                                        <div className="moc-body">
+                                            <div className="moc-items-header">
+                                                <span className="moc-items-title"><i className="fa-solid fa-box-open" style={{color: '#4b5563', marginRight: '6px'}}></i> Items</span>
+                                                <span className={`moc-status-badge ${statusClass}`}>{statusLabel}</span>
+                                            </div>
+
+                                            {order.items && order.items.map((item, idx) => (
+                                                <div key={idx} className="moc-item-row">
+                                                    <img src={item.image || 'https://via.placeholder.com/150'} alt={item.title} className="moc-item-img" style={{width:'50px', height:'60px'}} />
+                                                    <div className="moc-item-details">
+                                                        <div className="moc-item-title" style={{fontSize:'13px'}}>{item.title}</div>
+                                                        <div className="moc-item-meta">Qty: {item.quantity || 1} | Size: {item.size || 'N/A'}</div>
+                                                    </div>
+                                                    <div className="moc-item-earnings">
+                                                        <div className="moc-earning-amount" style={{fontSize:'14px'}}>₹{((item.price || item.selling_price || 0) * (item.quantity || 1)).toLocaleString('en-IN')}</div>
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {expandedOrders[order.id] && (
+                                                <div className="fade-in">
+                                                    <div className="moc-customer-section" style={{background:'#fef2f2', border:'1px solid #fecaca'}}>
+                                                        <div className="moc-customer-title" style={{color:'#991b1b'}}><i className="fa-solid fa-location-dot"></i> Delivery Address</div>
+                                                        <div className="moc-customer-name" style={{color:'#7f1d1d'}}>{customerName}</div>
+                                                        <div className="moc-customer-address">{addressString}</div>
+                                                        <div className="moc-customer-phone"><i className="fa-solid fa-phone"></i> {customerPhone}</div>
+                                                    </div>
+
+                                                    <div className="moc-customer-section" style={{background:'#f8fafc', border:'1px solid #e2e8f0'}}>
+                                                        <div className="moc-customer-title"><i className="fa-solid fa-store"></i> Seller Details</div>
+                                                        <div className="moc-customer-name">{brandName} ({sellerName})</div>
+                                                        <div className="moc-customer-address">{pickupAddress}<br/>{locationStr}</div>
+                                                        <div className="moc-customer-phone"><i className="fa-solid fa-phone"></i> {sellerPhone}</div>
+                                                    </div>
+
+                                                    {/* Admin Actions */}
+                                                    <div style={{marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e5e7eb'}}>
+                                                        {(currentStatus === 'pending' || currentStatus === 'created') && (
+                                                            <div style={{display:'flex', gap:'10px', flexWrap:'wrap', alignItems:'center'}}>
+                                                                {!isCOD && <input type="text" id={`manual-pay-id-${order.id}`} placeholder="Payment ID" className="input-box" style={{maxWidth:'140px', minHeight:'38px'}} />}
+                                                                <button type="button" className="action-btn" style={{background:'var(--success)', color:'white', border:'none'}} onClick={() => window.verifyManualPayment(order.id, isCOD)}>Verify Payment</button>
+                                                                <button type="button" className="action-btn" style={{background:'var(--danger)', color:'white', border:'none'}} onClick={() => window.updateOrderStatus(order.id, 'cancelled')}>Reject</button>
+                                                            </div>
+                                                        )}
+                                                        {currentStatus === 'paid' && <button type="button" className="btn-submit" onClick={() => window.updateOrderStatus(order.id, 'processing')}>Mark Processing</button>}
+                                                        {currentStatus === 'processing' && <button type="button" className="btn-submit" onClick={() => window.updateOrderStatus(order.id, 'shipped')}>Mark Shipped</button>}
+                                                        {currentStatus === 'shipped' && <button type="button" className="btn-submit" onClick={() => window.updateOrderStatus(order.id, 'out_for_delivery')}>Mark Out for Delivery</button>}
+                                                        {currentStatus === 'out_for_delivery' && <button type="button" className="btn-submit" style={{background:'var(--success)'}} onClick={() => window.updateOrderStatus(order.id, 'delivered')}>Mark Delivered</button>}
+                                                    </div>
+
+                                                    <div style={{marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e5e7eb'}}>
+                                                        <div style={{display:'flex', gap:'10px', flexWrap:'wrap'}}>
+                                                            <input type="text" id={`courier-name-${order.id}`} defaultValue={existingCourier} placeholder="Courier Name" className="input-box" style={{flex:1, minWidth:'120px'}} />
+                                                            <input type="text" id={`tracking-id-${order.id}`} defaultValue={existingTracking} placeholder="Tracking ID" className="input-box" style={{flex:1, minWidth:'120px'}} />
+                                                            <button type="button" id={`track-btn-${order.id}`} className="action-btn" style={{background:'var(--primary)', color:'white', border:'none'}} onClick={() => window.updateTrackingInfo(order.id)}>Save Tracking</button>
+                                                        </div>
+                                                        
+                                                        <div style={{marginTop:'12px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap'}}>
+                                                            {existingLabel && <a href={existingLabel} target="_blank" rel="noopener noreferrer" className="action-btn" style={{background:'#ecfdf5', color:'#065f46', borderColor:'#a7f3d0'}}><i className="fa-solid fa-file-pdf"></i> View Label</a>}
+                                                            <input type="file" id={`pdf-file-${order.id}`} accept=".pdf" style={{fontSize:'12px', maxWidth:'180px'}} />
+                                                            <button type="button" id={`upload-pdf-btn-${order.id}`} className="action-btn" onClick={() => window.handleLabelUpload(order.id)}>Upload Label PDF</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="moc-expand-trigger" onClick={() => setExpandedOrders(prev => ({...prev, [order.id]: !prev[order.id]}))}>
+                                            {expandedOrders[order.id] ? <>HIDE ADMIN DETAILS <i className="fa-solid fa-chevron-up"></i></> : <>VIEW ADMIN DETAILS <i className="fa-solid fa-chevron-down"></i></>}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
                 </div>
 
+                {/* SELLER DIRECTORY TAB */}
                 <div id="seller-access" className={`content-section ${activeTab === 'seller-access' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Seller Directory</span>
                     <p className="text-helper" style={{ marginBottom: '20px' }}>Only Google Emails added to this list will be allowed to log into the JAMBAWEAR Seller Portal.</p>
@@ -1840,6 +2105,112 @@ export default function Admin() {
                     </div>
                 </div>
 
+                {/* MESSAGES / SUPPORT COMMUNICATIONS TAB */}
+                <div id="messages" className={`content-section ${activeTab === 'messages' ? 'active' : ''}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <span className="section-title">Communications Hub</span>
+                        <div className="filter-group">
+                            <button type="button" className={`filter-btn ${messageTab === 'inbox' ? 'active' : ''}`} onClick={() => { setMessageTab('inbox'); setActiveTicket(null); }}>
+                                Inbox 
+                                {supportTickets.filter(t => t.status === 'open').length > 0 && <span style={{background:'var(--danger)', color:'white', padding:'2px 6px', borderRadius:'10px', fontSize:'10px', marginLeft:'4px'}}>{supportTickets.filter(t => t.status === 'open').length}</span>}
+                            </button>
+                            <button type="button" className={`filter-btn ${messageTab === 'broadcast' ? 'active' : ''}`} onClick={() => setMessageTab('broadcast')}>
+                                <i className="fa-solid fa-paper-plane"></i> Send Broadcast
+                            </button>
+                        </div>
+                    </div>
+
+                    {messageTab === 'inbox' && !activeTicket && (
+                        <div className="card">
+                            <span className="section-subtitle">Support Tickets & Queries</span>
+                            {supportTickets.length === 0 ? (
+                                <p style={{color: 'var(--text-muted)'}}>No active messages from sellers.</p>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    {supportTickets.map(ticket => (
+                                        <div key={ticket.id} className="ticket-card" onClick={() => setActiveTicket(ticket)}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                                <strong style={{ color: 'var(--primary)', fontSize: '15px' }}>{ticket.subject}</strong>
+                                                <span className={`ticket-status ${ticket.status}`}>{ticket.status === 'open' ? 'Needs Reply' : 'Resolved'}</span>
+                                            </div>
+                                            <div style={{ fontSize: '13px', color: 'var(--text-main)', marginBottom: '8px' }}>
+                                                From: <strong>{ticket.sellerName}</strong> ({ticket.email})
+                                            </div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                                {new Date(ticket.date).toLocaleString()} | ID: {ticket.id}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {messageTab === 'inbox' && activeTicket && (
+                        <div className="card chat-view-card">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #eee', paddingBottom: '16px' }}>
+                                <div>
+                                    <button type="button" onClick={() => setActiveTicket(null)} className="action-btn" style={{marginBottom: '10px', fontSize:'12px', padding:'4px 8px'}}><i className="fa-solid fa-arrow-left"></i> Back to Inbox</button>
+                                    <h3 style={{ margin: 0, color: 'var(--primary)' }}>{activeTicket.subject}</h3>
+                                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{activeTicket.sellerName} ({activeTicket.email})</span>
+                                </div>
+                                {activeTicket.status === 'open' && (
+                                    <button type="button" onClick={markTicketResolved} className="action-btn btn-status-active">
+                                        <i className="fa-solid fa-check"></i> Mark Resolved
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="chat-history-container">
+                                {activeTicket.messages.map((msg, idx) => (
+                                    <div key={idx} className={`chat-bubble-wrapper ${msg.sender === 'admin' ? 'admin-bubble' : 'seller-bubble'}`}>
+                                        <div className="chat-bubble">
+                                            {msg.text}
+                                        </div>
+                                        <span className="chat-time">{new Date(msg.time).toLocaleString([], {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'short'})}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <form onSubmit={handleReplyTicket} style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+                                <input type="text" id="ticket-reply-text" className="input-box" placeholder="Type your reply here..." required style={{flex: 1}} />
+                                <button type="submit" className="btn-submit" style={{width: 'auto', margin: 0, padding: '10px 24px'}}>Reply</button>
+                            </form>
+                        </div>
+                    )}
+
+                    {messageTab === 'broadcast' && (
+                        <form className="card" id="broadcast-form" onSubmit={handleSendBroadcast}>
+                            <span className="section-subtitle">Send a Direct Message or Broadcast</span>
+                            <p className="text-helper">Send an important update to all sellers or select a specific seller to communicate directly.</p>
+                            
+                            <div className="field-grid">
+                                <div className="form-group">
+                                    <span className="label">To</span>
+                                    <select id="broadcast-target" className="input-box" required>
+                                        <option value="all">📣 ALL SELLERS (Broadcast)</option>
+                                        {globalSellers.map(s => (
+                                            <option key={s.email} value={s.email}>{s.profile?.brandName || s.email}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <span className="label">Subject</span>
+                                    <input type="text" id="broadcast-subject" className="input-box" placeholder="e.g. Action Required: Holiday Shipping Delay" required />
+                                </div>
+                            </div>
+
+                            <div className="form-group" style={{ marginBottom: '20px' }}>
+                                <span className="label">Message</span>
+                                <textarea id="broadcast-message" className="input-box" style={{height: '150px'}} placeholder="Write your message here..." required></textarea>
+                            </div>
+
+                            <button type="submit" id="broadcast-btn" className="btn-submit">Send Message</button>
+                        </form>
+                    )}
+                </div>
+
+                {/* SITE SETTINGS TAB */}
                 <div id="site-settings" className={`content-section ${activeTab === 'site-settings' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Storefront Management (CMS)</span>
                     
@@ -1906,13 +2277,14 @@ export default function Admin() {
                     </div>
                 </div>
 
+                {/* CUSTOMERS TAB */}
                 <div id="customer-details" className={`content-section ${activeTab === 'customer-details' ? 'active' : ''}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <span className="section-title">Customer Relationship</span>
                         
                         <div className="search-container">
                             <i className="fa-solid fa-search"></i>
-                            <input type="text" id="customer-search" placeholder="Search Name, Email, Phone, District..." onInput={(event) => window.handleCustomerSearch(event.currentTarget.value)} />
+                            <input type="text" id="customer-search" placeholder="Search Name, Email, Phone..." onInput={(event) => window.handleCustomerSearch(event.currentTarget.value)} />
                         </div>
                     </div>
 
@@ -1920,8 +2292,92 @@ export default function Admin() {
                         <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading customers from database...</p>
                     </div>
                 </div>
+
+                {/* 🔥 STORE REVIEWS TAB WITH LIGHTBOX 🔥 */}
+                <div id="store-reviews" className={`content-section ${activeTab === 'store-reviews' ? 'active' : ''}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <span className="section-title">Reputation Management</span>
+                        <div className="filter-group">
+                            <button type="button" className={`filter-btn ${reviewFilter === 'all' ? 'active' : ''}`} onClick={() => setReviewFilter('all')}>All Reviews</button>
+                            <button type="button" className={`filter-btn ${reviewFilter === 'positive' ? 'active' : ''}`} onClick={() => setReviewFilter('positive')}>Positive (4-5 ★)</button>
+                            <button type="button" className={`filter-btn ${reviewFilter === 'negative' ? 'active' : ''}`} onClick={() => setReviewFilter('negative')} style={reviewFilter === 'negative' ? {color:'var(--danger)', borderColor:'var(--danger)'} : {}}>Critical (1-3 ★)</button>
+                        </div>
+                    </div>
+
+                    <div className="admin-reviews-grid">
+                        {allReviews.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)' }}>No reviews have been published yet.</p>
+                        ) : (
+                            allReviews.filter(rev => {
+                                if (reviewFilter === 'positive') return rev.rating >= 4;
+                                if (reviewFilter === 'negative') return rev.rating < 4;
+                                return true;
+                            }).map((rev) => {
+                                const relatedProduct = globalLiveProducts.find(p => p.id === rev.productId || p.item_id === rev.productId || p.docId === rev.productId);
+                                const productImg = relatedProduct?.images?.[0] || 'https://via.placeholder.com/80';
+                                const productTitle = relatedProduct?.title || 'Unknown Product';
+
+                                return (
+                                    <div key={rev.id} className="card review-admin-card">
+                                        <div className="review-admin-header">
+                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                                <img src={productImg} alt="product" className="review-product-thumb" />
+                                                <div>
+                                                    <div className="r-prod-title">{productTitle}</div>
+                                                    <div className="r-user-info">{rev.userName} • {new Date(rev.createdAt?.toDate ? rev.createdAt.toDate() : rev.createdAt).toLocaleDateString()}</div>
+                                                </div>
+                                            </div>
+                                            <div className={`rev-star-badge rating-${rev.rating}`}>
+                                                {rev.rating} ★
+                                            </div>
+                                        </div>
+
+                                        <div className="review-admin-body">
+                                            "{rev.reviewText || 'No text provided.'}"
+                                        </div>
+
+                                        {/* 🔥 CLICKABLE IMAGES 🔥 */}
+                                        {rev.images && rev.images.length > 0 && (
+                                            <div className="review-admin-images">
+                                                {rev.images.map((img, i) => (
+                                                    <img 
+                                                        key={i} 
+                                                        src={img} 
+                                                        alt="customer upload" 
+                                                        onClick={() => setFullscreenImage(img)}
+                                                        style={{ cursor: 'pointer', transition: 'transform 0.2s ease', border: '1px solid #e5e7eb' }}
+                                                        onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                                                        onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        <div className="review-admin-footer">
+                                            <button className="action-btn btn-delete" onClick={() => window.deleteReview(rev.id)}>
+                                                <i className="fa-solid fa-trash"></i> Delete Review
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+
+                {/* 🔥 FULLSCREEN IMAGE MODAL 🔥 */}
+                {fullscreenImage && (
+                    <div className="image-lightbox-overlay" onClick={() => setFullscreenImage(null)}>
+                        <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
+                            <button className="image-lightbox-close" onClick={() => setFullscreenImage(null)}>✕</button>
+                            <img src={fullscreenImage} alt="Fullscreen Review" />
+                        </div>
+                    </div>
+                )}
+
             </div>
 
+            {/* SELLER MODAL OVERLAY */}
             {selectedSeller && (
                 <div className="admin-modal-overlay">
                     <div className="admin-modal-content">
@@ -2054,6 +2510,7 @@ export default function Admin() {
                     </div>
                 </div>
             )}
+
         </div>
     );
 }
